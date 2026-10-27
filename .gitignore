@@ -33,3 +33,7 @@ data/*.jsonl
 # YOLO dry-run screenshots (keep folder)
 data/yolo-screenshots/*
 !data/yolo-screenshots/.gitkeep
+
+# paper session outputs (also covered by data/*.json / *.jsonl)
+# data/paper-*.json
+# data/paper-learnings.jsonl

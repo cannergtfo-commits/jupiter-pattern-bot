@@ -21,3 +21,5 @@ export type {
   YoloPosition,
   YoloScanRec,
 } from "./types.js";
+export * from "./constants.js";
+export { runPaperHarness } from "./paper-engine.js";

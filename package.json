@@ -17,7 +17,9 @@
     "audit": "npm audit --omit=dev",
     "init-wallet": "node --import tsx scripts/init-wallet.ts",
     "paper": "node --import tsx scripts/paper-yolo.ts",
-    "yolo:dry-run": "node --import tsx scripts/yolo-dry-run.ts"
+    "yolo:dry-run": "node --import tsx scripts/yolo-dry-run.ts",
+    "paper:10": "node --import tsx scripts/paper-yolo.ts --minutes 10",
+    "paper:15": "node --import tsx scripts/paper-yolo.ts --minutes 15"
   },
   "engines": {
     "node": ">=20"
