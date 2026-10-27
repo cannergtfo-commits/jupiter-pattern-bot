@@ -3,7 +3,12 @@
  *
  * DRY_RUN (default): open page, screenshot, log intended Long/Short/Close — never confirm.
  * LIVE: requires dryRun=false AND liveEnabled=true; clicks Long/Short/Close.
- *        Does NOT inject private keys — wallet must be connected in persistent profile.
+ *
+ * Wallet Connect (preferred for box-run):
+ *   YOLO_INJECT_WALLET=true (default) injects a Phantom-compatible provider.
+ *   Secret stays in Node via exposeFunction — never written into page JS / screenshots.
+ * Fallback: persistent Chromium profile with a manually connected extension
+ *   (YOLO_USER_DATA_DIR) — do NOT paste secrets into chat for that path.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -12,6 +17,11 @@ import { ROOT } from "../config.js";
 import { YOLO_CLOSE_LOCKOUT_MS, YOLO_DEFAULT_COLLATERAL, YOLO_DEFAULT_LEVERAGE } from "./constants.js";
 import { FRAGILITY_NOTES, SELECTORS, YOLO_URL_SOL_CLASSIC } from "./selectors.js";
 import { addYoloPosition, closeYoloPosition, openYoloPositions } from "./positions-store.js";
+import {
+  clampYoloCollateral,
+  createInjectedWalletBindings,
+  type InjectedWalletBindings,
+} from "./injected-wallet.js";
 import type {
   YoloActionResult,
   YoloDriverConfig,
@@ -20,21 +30,30 @@ import type {
   YoloSide,
 } from "./types.js";
 
+function envFlag(name: string, defaultTrue = false): boolean {
+  const v = process.env[name];
+  if (v === undefined || v === "") return defaultTrue;
+  return ["1", "true", "yes", "on"].includes(String(v).toLowerCase());
+}
+
 export function defaultYoloConfig(partial?: Partial<YoloDriverConfig>): YoloDriverConfig {
   const dryRun = partial?.dryRun ?? true;
   const liveEnabled = partial?.liveEnabled ?? false;
+  const injectWallet = partial?.injectWallet ?? envFlag("YOLO_INJECT_WALLET", true);
   return {
     dryRun,
     headless: partial?.headless ?? true,
     market: partial?.market ?? "SOL",
     mode: "classic",
-    collateral: partial?.collateral ?? YOLO_DEFAULT_COLLATERAL,
+    collateral: clampYoloCollateral(partial?.collateral ?? YOLO_DEFAULT_COLLATERAL),
     leverage: partial?.leverage ?? YOLO_DEFAULT_LEVERAGE,
     url: partial?.url ?? YOLO_URL_SOL_CLASSIC,
     userDataDir: partial?.userDataDir,
     screenshotDir: partial?.screenshotDir ?? path.join(ROOT, "data", "yolo-screenshots"),
     timeoutMs: partial?.timeoutMs ?? 45_000,
     liveEnabled: dryRun ? false : liveEnabled,
+    injectWallet,
+    autoApproveWallet: partial?.autoApproveWallet ?? envFlag("YOLO_AUTO_APPROVE", true),
   };
 }
 
@@ -101,16 +120,75 @@ async function tryClickRole(
   return false;
 }
 
-async function fillCollateral(page: import("playwright").Page, amount: number): Promise<boolean> {
-  for (const sel of SELECTORS.collateralInput) {
+
+async function clickPhantomInModal(page: import("playwright").Page): Promise<boolean> {
+  const candidates = [
+    page.getByRole("button", { name: /continue\s*to\s*phantom/i }),
+    page.getByText(/continue\s*to\s*phantom/i),
+    page.locator('[data-testid*="phantom" i]'),
+    page.getByRole("button", { name: /^phantom$/i }),
+    page.locator('button:has-text("Phantom")'),
+    page.locator('div[role="button"]:has-text("Phantom")'),
+    page.locator('li:has-text("Phantom")'),
+    page.getByRole("button", { name: /phantom/i }),
+    page.getByText(/^phantom$/i),
+  ];
+  for (const loc of candidates) {
     try {
-      const loc = page.locator(sel).first();
-      if (await loc.count()) {
-        await loc.fill(String(amount), { timeout: 3_000 });
+      const el = loc.first();
+      if (await el.isVisible({ timeout: 700 }).catch(() => false)) {
+        await el.scrollIntoViewIfNeeded().catch(() => undefined);
+        await el.click({ timeout: 3_000, force: true });
         return true;
       }
     } catch {
       /* next */
+    }
+  }
+  return false;
+}
+
+async function fillCollateral(page: import("playwright").Page, amount: number): Promise<boolean> {
+  const clamped = clampYoloCollateral(amount);
+  for (const sel of SELECTORS.collateralInput) {
+    try {
+      const loc = page.locator(sel).first();
+      if (await loc.count()) {
+        await loc.fill(String(clamped), { timeout: 3_000 });
+        return true;
+      }
+    } catch {
+      /* next */
+    }
+  }
+  return false;
+}
+
+async function isConnectVisible(page: import("playwright").Page): Promise<boolean> {
+  try {
+    if (await page.getByRole("button", { name: /^connect$/i }).first().isVisible({ timeout: 600 })) {
+      return true;
+    }
+  } catch {
+    /* fall through */
+  }
+  try {
+    return await page.getByRole("button", { name: /connect\s*wallet/i }).first().isVisible({ timeout: 400 });
+  } catch {
+    return false;
+  }
+}
+
+async function isLongShortVisible(page: import("playwright").Page): Promise<boolean> {
+  for (const c of [...SELECTORS.longButton, ...SELECTORS.shortButton]) {
+    if (typeof c !== "string" && "role" in c) {
+      try {
+        if (await page.getByRole(c.role, { name: c.name }).first().isVisible({ timeout: 500 })) {
+          return true;
+        }
+      } catch {
+        /* next */
+      }
     }
   }
   return false;
@@ -121,6 +199,8 @@ export class YoloDriver {
   private browser: import("playwright").Browser | import("playwright").BrowserContext | null = null;
   private page: import("playwright").Page | null = null;
   private ownsBrowser = false;
+  private injected: InjectedWalletBindings | null = null;
+  private connectedPublicKey: string | undefined;
 
   constructor(cfg?: Partial<YoloDriverConfig>) {
     this.cfg = defaultYoloConfig(cfg);
@@ -128,6 +208,10 @@ export class YoloDriver {
 
   fragilityNotes(): string[] {
     return [...FRAGILITY_NOTES];
+  }
+
+  getPublicKey(): string | undefined {
+    return this.connectedPublicKey ?? this.injected?.publicKey;
   }
 
   async openBrowser(): Promise<YoloActionResult> {
@@ -142,33 +226,51 @@ export class YoloDriver {
       };
     }
     try {
-      if (this.cfg.userDataDir && !this.cfg.dryRun && this.cfg.liveEnabled) {
+      if (this.cfg.injectWallet) {
+        this.injected = createInjectedWalletBindings({ autoApprove: this.cfg.autoApproveWallet });
+        this.connectedPublicKey = this.injected.publicKey;
+      }
+
+      const launchArgs = ["--disable-blink-features=AutomationControlled"];
+      if (this.cfg.userDataDir) {
         const ctx = await pw.chromium.launchPersistentContext(this.cfg.userDataDir, {
           headless: this.cfg.headless,
           viewport: { width: 1440, height: 900 },
+          args: launchArgs,
         });
         this.browser = ctx;
         this.page = ctx.pages()[0] ?? (await ctx.newPage());
+        if (this.injected) await this.injected.attach(this.page);
       } else {
-        const browser = await pw.chromium.launch({ headless: this.cfg.headless });
+        const browser = await pw.chromium.launch({ headless: this.cfg.headless, args: launchArgs });
         this.browser = browser;
         this.ownsBrowser = true;
         const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
         this.page = await ctx.newPage();
+        if (this.injected) await this.injected.attach(this.page);
       }
+
       await this.page.goto(this.cfg.url, {
         waitUntil: "domcontentloaded",
         timeout: this.cfg.timeoutMs,
       });
-      // Best-effort dismiss terms
+      // Let React hydrate (headed paints late; headless often stays black)
+      await this.page.waitForTimeout(2_500);
+      await tryClickRole(this.page, SELECTORS.dismissOverlay, 2_000).catch(() => false);
       await tryClickRole(this.page, SELECTORS.acceptTerms, 2_000);
+      // Second pass: seasonal promo / "Maybe later" after first paint
+      await tryClickRole(this.page, SELECTORS.dismissOverlay, 1_500).catch(() => false);
+      await this.page.waitForTimeout(1_000);
+
       const screenshotPath = await shot(this.page, this.cfg.screenshotDir, "navigate");
+      const pkNote = this.injected ? ` injectWallet pk=${this.injected.publicKey}` : "";
       return {
         ok: true,
         dryRun: this.cfg.dryRun,
         action: "navigate",
-        message: `Opened ${this.cfg.url} headless=${this.cfg.headless} dryRun=${this.cfg.dryRun}`,
+        message: `Opened ${this.cfg.url} headless=${this.cfg.headless} dryRun=${this.cfg.dryRun}${pkNote}`,
         screenshotPath,
+        publicKey: this.injected?.publicKey,
       };
     } catch (e) {
       return {
@@ -181,13 +283,221 @@ export class YoloDriver {
     }
   }
 
+  /**
+   * Click Connect → Phantom (injected). Safe in dry-run (connect only, no Long/Short).
+   * Secret never enters the page.
+   */
+  async connectWallet(): Promise<YoloActionResult> {
+    if (!this.page) {
+      const nav = await this.openBrowser();
+      if (!nav.ok) return { ...nav, action: "connect" };
+    }
+    const page = this.page!;
+    try {
+      await tryClickRole(page, SELECTORS.dismissOverlay, 1_000).catch(() => false);
+
+      // Already connected?
+      if (!(await isConnectVisible(page)) && (await isLongShortVisible(page))) {
+        const screenshotPath = await shot(page, this.cfg.screenshotDir, "already-connected");
+        return {
+          ok: true,
+          dryRun: this.cfg.dryRun,
+          action: "connect",
+          message: `Wallet already connected (Long/Short visible)${this.injected ? ` pk=${this.injected.publicKey}` : ""}`,
+          screenshotPath,
+          publicKey: this.injected?.publicKey,
+        };
+      }
+
+      if (!this.injected && this.cfg.injectWallet) {
+        return {
+          ok: false,
+          dryRun: this.cfg.dryRun,
+          action: "connect",
+          message: "injectWallet enabled but bindings missing — reopen browser",
+          error: "inject_missing",
+        };
+      }
+
+      // Prefer landing CTA "Continue to Phantom" when present (skips wallet modal)
+      const continued = await tryClickRole(page, SELECTORS.continueToPhantom, 2_500);
+      if (continued) {
+        console.log("[yolo] clicked Continue to Phantom");
+        await page.waitForTimeout(1_000);
+      }
+
+      const clickedConnect = continued
+        ? true
+        : await tryClickRole(page, SELECTORS.connectWallet, 5_000);
+      if (!clickedConnect) {
+        const screenshotPath = await shot(page, this.cfg.screenshotDir, "connect-miss");
+        // Maybe already past connect
+        if (await isLongShortVisible(page)) {
+          return {
+            ok: true,
+            dryRun: this.cfg.dryRun,
+            action: "connect",
+            message: "Connect button missing but Long/Short visible — treating as connected",
+            screenshotPath,
+            publicKey: this.injected?.publicKey,
+          };
+        }
+        return {
+          ok: false,
+          dryRun: this.cfg.dryRun,
+          action: "connect",
+          message: "Connect button not found (blank/captcha shell? try headed)",
+          error: "connect_miss",
+          screenshotPath,
+        };
+      }
+
+      // Modal often shows Jupiter Wallet / Mobile first — expand list, then Phantom
+      await page.waitForTimeout(800);
+      await tryClickRole(page, SELECTORS.viewMoreWallets, 3_000);
+      await page.waitForTimeout(500);
+      let picked = await clickPhantomInModal(page);
+      if (!picked) {
+        await tryClickRole(page, SELECTORS.viewMoreWallets, 2_000);
+        await page.waitForTimeout(400);
+        picked = await clickPhantomInModal(page);
+      }
+      if (!picked) {
+        await tryClickRole(
+          page,
+          [
+            { role: "button", name: /browser\s*wallet/i },
+            { text: /injected/i },
+          ],
+          2_000
+        );
+      }
+      console.log(`[yolo] phantom tile clicked=${picked}`);
+      // Landing CTA sometimes shows "Continue to Phantom" outside the modal
+      await tryClickRole(page, SELECTORS.continueToPhantom, 2_000);
+
+
+      // Ensure provider.connect ran (sites call it; also call directly as fallback)
+      if (this.injected) {
+        const bridge = await page.evaluate(async () => {
+          const w = window as unknown as {
+            solana?: {
+              isPhantom?: boolean;
+              connect: () => Promise<unknown>;
+              publicKey?: { toString(): string } | null;
+            };
+            phantom?: { solana?: { isPhantom?: boolean; connect: () => Promise<unknown> } };
+          };
+          const has = {
+            solana: !!w.solana,
+            phantom: !!w.phantom?.solana,
+            isPhantom: !!(w.solana?.isPhantom || w.phantom?.solana?.isPhantom),
+          };
+          try {
+            await w.phantom?.solana?.connect();
+          } catch {
+            /* ignore */
+          }
+          try {
+            await w.solana?.connect();
+          } catch {
+            /* ignore */
+          }
+          return {
+            ...has,
+            pk: w.solana?.publicKey ? w.solana.publicKey.toString() : null,
+          };
+        });
+        console.log(`[yolo] injected bridge`, bridge);
+      }
+
+      // Poll for ticket (Long/Short) — Jupiter React state lags after wallet-standard connect
+      let longShort = false;
+      let connectStill = true;
+      let modalOpen = true;
+      let addrChip = false;
+      let bridgePk: string | null = null;
+      for (let i = 0; i < 12; i++) {
+        await page.waitForTimeout(700);
+        await tryClickRole(page, SELECTORS.acceptTerms, 700).catch(() => false);
+        await tryClickRole(page, SELECTORS.dismissOverlay, 500).catch(() => false);
+        await tryClickRole(page, SELECTORS.continueToPhantom, 500).catch(() => false);
+        if (i === 2 || i === 5 || i === 8) {
+          await clickPhantomInModal(page).catch(() => false);
+          await page.keyboard.press("Escape").catch(() => undefined);
+          await page
+            .locator('button[aria-label*="close" i], button:has-text("×")')
+            .first()
+            .click({ timeout: 600 })
+            .catch(() => undefined);
+        }
+        bridgePk = await page.evaluate(() => {
+          const w = window as unknown as { solana?: { publicKey?: { toString(): string } | null } };
+          return w.solana?.publicKey ? w.solana.publicKey.toString() : null;
+        });
+        longShort = await isLongShortVisible(page);
+        connectStill = await isConnectVisible(page);
+        modalOpen = await page
+          .getByText(/view\s*more\s*wallets|view\s*less\s*wallets|jupiter\s*mobile|get\s*jupiter\s*wallet/i)
+          .first()
+          .isVisible({ timeout: 300 })
+          .catch(() => false);
+        addrChip = this.injected
+          ? await page
+              .getByText(new RegExp(this.injected.publicKey.slice(0, 4), "i"))
+              .first()
+              .isVisible({ timeout: 300 })
+              .catch(() => false)
+          : false;
+        if (longShort && !connectStill) break;
+        if (addrChip && !modalOpen && !connectStill) break;
+      }
+      const connected = (longShort || addrChip) && !connectStill;
+      console.log(
+        `[yolo] connect check longShort=${longShort} connectStill=${connectStill} modalOpen=${modalOpen} addrChip=${addrChip} bridgePk=${!!bridgePk}`
+      );
+
+      const screenshotPath = await shot(page, this.cfg.screenshotDir, connected ? "connected" : "connect-fail");
+      if (!connected) {
+        return {
+          ok: false,
+          dryRun: this.cfg.dryRun,
+          action: "connect",
+          message:
+            "Connect clicked but wallet still not active — Jupiter modal may need headed human, or captcha blocked page",
+          error: "connect_incomplete",
+          screenshotPath,
+          publicKey: this.injected?.publicKey,
+        };
+      }
+
+      this.connectedPublicKey = this.injected?.publicKey;
+      return {
+        ok: true,
+        dryRun: this.cfg.dryRun,
+        action: "connect",
+        message: `Connected via injected Phantom provider pk=${this.injected?.publicKey ?? "(extension)"}`,
+        screenshotPath,
+        publicKey: this.injected?.publicKey,
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        dryRun: this.cfg.dryRun,
+        action: "connect",
+        message: "connectWallet failed",
+        error: (e as Error).message,
+        publicKey: this.injected?.publicKey,
+      };
+    }
+  }
+
   async openPosition(req: YoloOpenRequest): Promise<YoloActionResult> {
     const side: YoloSide = req.side;
-    const collateral = req.collateral ?? this.cfg.collateral;
+    const collateral = clampYoloCollateral(req.collateral ?? this.cfg.collateral);
     const leverage = req.leverage ?? this.cfg.leverage;
     const id = randomUUID();
 
-    // Always record a tracked position for off-page TP/SL/max-hold
     const pos: YoloPosition = {
       id,
       side,
@@ -204,12 +514,9 @@ export class YoloDriver {
     if (this.cfg.dryRun || !this.cfg.liveEnabled) {
       let screenshotPath: string | undefined;
       if (this.page) {
-        // Hover/focus intended button but DO NOT click confirm path in dry-run
         const btns = side === "LONG" ? SELECTORS.longButton : SELECTORS.shortButton;
         await tryClickRole(this.page, SELECTORS.marketSol, 2_000).catch(() => false);
         await fillCollateral(this.page, collateral).catch(() => false);
-        // Locate button visibility for the screenshot log — click only if we want prep,
-        // but we skip the actual Long/Short click in dry-run to avoid wallet popups.
         for (const c of btns) {
           if (typeof c !== "string" && "role" in c) {
             try {
@@ -240,11 +547,38 @@ export class YoloDriver {
     }
     try {
       const page = this.page!;
+      // Ensure connected before Long/Short
+      if (await isConnectVisible(page)) {
+        const conn = await this.connectWallet();
+        if (!conn.ok) {
+          return { ...conn, action: "open", side };
+        }
+      }
       await tryClickRole(page, SELECTORS.marketSol, 3_000);
       await fillCollateral(page, collateral);
+      if (leverage <= 500) {
+        for (let i = 0; i < 8; i++) {
+          const hit = await tryClickRole(page, SELECTORS.leverageMinus, 800);
+          if (!hit) break;
+        }
+      }
       const btns = side === "LONG" ? SELECTORS.longButton : SELECTORS.shortButton;
       const clicked = await tryClickRole(page, btns, 5_000);
       if (!clicked) {
+        const connectVisible = await isConnectVisible(page);
+        const shotPath = await shot(page, this.cfg.screenshotDir, `fail-${side.toLowerCase()}`);
+        if (connectVisible) {
+          return {
+            ok: false,
+            dryRun: false,
+            action: "open",
+            side,
+            message:
+              "LIVE: wallet not connected — UI shows Connect. Run `npm run bot -- yolo connect` with YOLO_INJECT_WALLET=true (default).",
+            error: "wallet_not_connected",
+            screenshotPath: shotPath,
+          };
+        }
         return {
           ok: false,
           dryRun: false,
@@ -252,10 +586,9 @@ export class YoloDriver {
           side,
           message: `LIVE: could not find ${side} button — UI selectors likely stale`,
           error: "selector_miss",
-          screenshotPath: await shot(page, this.cfg.screenshotDir, `fail-${side.toLowerCase()}`),
+          screenshotPath: shotPath,
         };
       }
-      // Wallet approve is external — wait briefly for Positions row
       await page.waitForTimeout(3_000);
       const screenshotPath = await shot(page, this.cfg.screenshotDir, `live-${side.toLowerCase()}`);
       pos.dryRun = false;
@@ -267,7 +600,7 @@ export class YoloDriver {
         side,
         positionId: id,
         screenshotPath,
-        message: `LIVE clicked ${side} — confirm wallet popup if shown; 15s close lockout applies`,
+        message: `LIVE clicked ${side} collateral=${collateral} — injected wallet auto-approves sign; 15s close lockout applies`,
       };
     } catch (e) {
       return {
@@ -298,7 +631,6 @@ export class YoloDriver {
       const screenshotPath = this.page
         ? await shot(this.page, this.cfg.screenshotDir, "dry-close")
         : undefined;
-      // Caller (monitor) sets reason/pnl via closeYoloPosition — here just UI sim
       return {
         ok: true,
         dryRun: true,
@@ -316,7 +648,6 @@ export class YoloDriver {
     }
     try {
       const page = this.page!;
-      // Respect 15s YOLO lockout
       const age = Date.now() - Date.parse(target.openedAt);
       if (age < YOLO_CLOSE_LOCKOUT_MS) {
         await page.waitForTimeout(YOLO_CLOSE_LOCKOUT_MS - age + 500);
@@ -356,7 +687,6 @@ export class YoloDriver {
     }
   }
 
-  /** Finalize store close after driver close / monitor decision. */
   finalizeClose(
     id: string,
     reason: NonNullable<YoloPosition["closeReason"]>,
@@ -382,5 +712,6 @@ export class YoloDriver {
     }
     this.page = null;
     this.browser = null;
+    this.injected = null;
   }
 }

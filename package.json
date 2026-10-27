@@ -1,7 +1,7 @@
 {
   "name": "jupiter-pattern-bot",
   "version": "1.0.0",
-  "description": "CLI Solana pattern trader \u2014 YOLO browser long/short (dry-run default) + Jupiter spot, 30s scan / 40s max hold, learn-from-closes",
+  "description": "CLI Solana pattern trader — YOLO browser long/short (dry-run default) + Jupiter spot, 30s scan / 40s max hold, learn-from-closes",
   "type": "module",
   "main": "dist/cli.js",
   "bin": {
@@ -22,12 +22,16 @@
     "paper:15": "node --import tsx scripts/paper-yolo.ts --minutes 15",
     "yolo:probe": "node --import tsx src/cli.ts yolo probe",
     "lessons:merge": "node --import tsx scripts/merge-skill-lessons.ts",
-    "test:paper": "node --import tsx --test scripts/test-paper-harness.ts"
+    "test:paper": "node --import tsx --test scripts/test-paper-harness.ts",
+    "yolo:one-live": "node --import tsx scripts/yolo-one-live.ts",
+    "yolo:connect": "node --import tsx src/cli.ts yolo connect --headed",
+    "test:inject": "node --import tsx --test scripts/test-injected-wallet.ts"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
+    "@noble/curves": "^1.9.7",
     "@solana/web3.js": "1.98.4",
     "bs58": "6.0.0",
     "chalk": "5.4.1",

@@ -77,6 +77,20 @@ export async function probeYoloSelectors(opts?: {
     });
     await page.waitForTimeout(2_500);
 
+    // Soft-dismiss seasonal overlays then terms
+    for (const c of SELECTORS.dismissOverlay) {
+      if ("role" in c) {
+        try {
+          const loc = page.getByRole(c.role, { name: c.name }).first();
+          if (await loc.isVisible({ timeout: 600 }).catch(() => false)) {
+            await loc.click({ timeout: 1_500 });
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
     // Soft-dismiss terms so Long/Short may render — still no trade clicks
     for (const c of SELECTORS.acceptTerms) {
       if ("role" in c) {
@@ -146,7 +160,16 @@ export async function probeYoloSelectors(opts?: {
     }
 
     const matched = base.hits.filter((h) => h.matched).length;
-    base.note = `Probe complete: ${matched}/${base.hits.length} selectors visible. Long/Short/Close were NOT clicked. UI may be blank/captcha in headless — treat misses as fragile, not proof of absence.`;
+    const bodyText = await page.locator("body").innerText().catch(() => "");
+    const blankShell =
+      matched === 0 ||
+      bodyText.trim().length < 40 ||
+      /captcha|checking your browser|just a moment/i.test(bodyText);
+    if (blankShell) {
+      base.note = `BLANK/CAPTCHA SHELL likely (matched=${matched}/${base.hits.length}, bodyChars=${bodyText.trim().length}). Re-run headed (\`npm run bot -- yolo probe --headed\`) before trusting misses. Long/Short/Close were NOT clicked.`;
+    } else {
+      base.note = `Probe complete: ${matched}/${base.hits.length} selectors visible. Long/Short/Close were NOT clicked. UI may be blank/captcha in headless — treat misses as fragile, not proof of absence.`;
+    }
     return base;
   } finally {
     await browser.close().catch(() => undefined);

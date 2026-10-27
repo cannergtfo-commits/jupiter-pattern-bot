@@ -25,10 +25,17 @@ export interface YoloDriverConfig {
   timeoutMs: number;
   /**
    * LIVE only: if true, actually click Long/Short and attempt close.
-   * Requires DRY_RUN=false AND YOLO_LIVE=true. Wallet must already be
-   * connected in the persistent profile — this driver does NOT inject keys.
+   * Requires DRY_RUN=false AND YOLO_LIVE=true.
    */
   liveEnabled: boolean;
+  /**
+   * Inject Phantom-compatible window.solana / window.phantom.solana backed by
+   * .wallet keypair in Node. Secret never enters page JS. Default: true when
+   * YOLO_INJECT_WALLET is unset/true.
+   */
+  injectWallet: boolean;
+  /** Auto-approve injected wallet signatures (default true when injecting). */
+  autoApproveWallet: boolean;
 }
 
 export interface YoloOpenRequest {
@@ -44,13 +51,15 @@ export interface YoloOpenRequest {
 export interface YoloActionResult {
   ok: boolean;
   dryRun: boolean;
-  action: "open" | "close" | "navigate" | "screenshot" | "noop";
+  action: "open" | "close" | "navigate" | "screenshot" | "noop" | "connect";
   side?: YoloSide;
   message: string;
   screenshotPath?: string;
   /** Simulated or recorded position id */
   positionId?: string;
   error?: string;
+  /** Public address only (never secret). */
+  publicKey?: string;
 }
 
 export interface YoloPosition {
