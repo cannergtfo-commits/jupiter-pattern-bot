@@ -37,3 +37,8 @@ data/yolo-screenshots/*
 # paper session outputs (also covered by data/*.json / *.jsonl)
 # data/paper-*.json
 # data/paper-learnings.jsonl
+
+# YOLO / paper runtime
+data/yolo-runs/
+data/paper-*.json
+!data/.gitkeep

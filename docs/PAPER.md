@@ -42,6 +42,9 @@ Env overrides (optional): `PAPER_MINUTES`, `PAPER_DURATION_MS`, `PAPER_TP_PCT`, 
 | `data/paper-yolo-session.json` | Latest session summary (overwritten each run) |
 | `data/paper-<iso-timestamp>.json` | Stamped copy of that session |
 | `data/paper-learnings.jsonl` | Append-only lesson per closed trade |
+| `data/trade-learnings.json` / `pending-skill-lessons.jsonl` | Via `learning.ts` (same path as live closes) |
+
+Signal source defaults to **solana-skill** (`scanSolForYolo`). Pass `--momentum-only` for the tiny mark-momentum fallback (also used in unit tests).
 
 All under `data/` are **gitignored** (except `.gitkeep`). Never commit `.env` or `.wallet/`.
 
@@ -54,3 +57,16 @@ Paper **SHORT** is a real paper position vs the mark (PnL flips with price). Liv
 - Always dry — this script never loads the keypair or clicks YOLO.
 - Keep `DRY_RUN=true` in `.env` for the main bot.
 - Do not fund a wallet for paper sessions.
+
+## Learning merge path
+
+Each paper close also calls `recordClosedTradeLesson` → `data/trade-learnings.json` + `data/pending-skill-lessons.jsonl`.
+
+```bash
+npm run lessons:merge -- --dry   # preview bullets
+npm run lessons:merge            # append docs/trade-learnings.md, archive pending
+npm run test:paper               # 30s/40s harness unit tests
+```
+
+Shared timing: `src/yolo/constants.ts` (`YOLO_HARNESS` — 30s scan, 40s max hold, 5s poll).
+

@@ -7,6 +7,7 @@ import { loadConfig } from "../config.js";
 import { YoloDriver, defaultYoloConfig } from "./driver.js";
 import { monitorYoloPositions } from "./monitor.js";
 import { hasOpenYolo } from "./positions-store.js";
+import { YOLO_HARNESS } from "./constants.js";
 import { scanSolForYolo } from "./scan-sol.js";
 
 function sleep(ms: number): Promise<void> {
@@ -39,7 +40,7 @@ export async function runYoloLoop(opts: YoloLoopOpts = {}): Promise<void> {
   console.log(chalk.bold("\n══ YOLO browser loop ══"));
   console.log(
     chalk.yellow(
-      `dryRun=${driver.cfg.dryRun} liveEnabled=${driver.cfg.liveEnabled} coll=${driver.cfg.collateral} lev=${driver.cfg.leverage}x TP=+${cfg.takeProfitPct}% SL=-${cfg.stopLossPct}% maxHold=${cfg.maxHoldSeconds}s`
+      `dryRun=${driver.cfg.dryRun} liveEnabled=${driver.cfg.liveEnabled} coll=${driver.cfg.collateral} lev=${driver.cfg.leverage}x TP=+${cfg.takeProfitPct}% SL=-${cfg.stopLossPct}% scan=${cfg.scanIntervalMs || YOLO_HARNESS.scanIntervalMs}ms maxHold=${cfg.maxHoldSeconds || YOLO_HARNESS.maxHoldSeconds}s poll=${cfg.positionPollMs || YOLO_HARNESS.positionPollMs}ms`
     )
   );
   for (const n of driver.fragilityNotes().slice(0, 4)) {

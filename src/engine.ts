@@ -152,9 +152,33 @@ export function startEngine(): void {
   timer = setInterval(() => {
     void tickOnce();
   }, interval);
-  // Separate monitor so maxHoldSeconds (e.g. 40s) is honored between scans
+  // Separate monitor so maxHoldSeconds (e.g. 40s) is honored between 30s scans
   monitorTimer = setInterval(() => {
     if (!loadBotState().armed) return;
+    if (cfg.tradeVenue === "yolo") {
+      void (async () => {
+        const { YoloDriver, defaultYoloConfig } = await import("./yolo/driver.js");
+        const { monitorYoloPositions } = await import("./yolo/monitor.js");
+        const live =
+          !cfg.dryRun &&
+          ["1", "true", "yes", "on"].includes(String(process.env.YOLO_LIVE || "").toLowerCase());
+        const driver = new YoloDriver(
+          defaultYoloConfig({
+            dryRun: cfg.dryRun || !live,
+            liveEnabled: live,
+            collateral: cfg.yoloCollateral,
+            leverage: cfg.yoloLeverage,
+            headless: true,
+          })
+        );
+        try {
+          await monitorYoloPositions(driver);
+        } finally {
+          await driver.close();
+        }
+      })().catch(() => undefined);
+      return;
+    }
     void monitorPositions().catch(() => undefined);
   }, poll);
 }

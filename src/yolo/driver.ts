@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { ROOT } from "../config.js";
+import { YOLO_CLOSE_LOCKOUT_MS, YOLO_DEFAULT_COLLATERAL, YOLO_DEFAULT_LEVERAGE } from "./constants.js";
 import { FRAGILITY_NOTES, SELECTORS, YOLO_URL_SOL_CLASSIC } from "./selectors.js";
 import { addYoloPosition, closeYoloPosition, openYoloPositions } from "./positions-store.js";
 import type {
@@ -27,8 +28,8 @@ export function defaultYoloConfig(partial?: Partial<YoloDriverConfig>): YoloDriv
     headless: partial?.headless ?? true,
     market: partial?.market ?? "SOL",
     mode: "classic",
-    collateral: partial?.collateral ?? 5, // YOLO minimum
-    leverage: partial?.leverage ?? 500, // lowest offered
+    collateral: partial?.collateral ?? YOLO_DEFAULT_COLLATERAL,
+    leverage: partial?.leverage ?? YOLO_DEFAULT_LEVERAGE,
     url: partial?.url ?? YOLO_URL_SOL_CLASSIC,
     userDataDir: partial?.userDataDir,
     screenshotDir: partial?.screenshotDir ?? path.join(ROOT, "data", "yolo-screenshots"),
@@ -317,8 +318,8 @@ export class YoloDriver {
       const page = this.page!;
       // Respect 15s YOLO lockout
       const age = Date.now() - Date.parse(target.openedAt);
-      if (age < 15_000) {
-        await page.waitForTimeout(15_000 - age + 500);
+      if (age < YOLO_CLOSE_LOCKOUT_MS) {
+        await page.waitForTimeout(YOLO_CLOSE_LOCKOUT_MS - age + 500);
       }
       await tryClickRole(page, SELECTORS.positionsTab, 2_000);
       const clicked = await tryClickRole(page, SELECTORS.closePosition, 5_000);
