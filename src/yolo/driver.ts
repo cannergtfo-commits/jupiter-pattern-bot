@@ -103,13 +103,15 @@ async function tryClickRole(
       } else if ("role" in c) {
         const loc = page.getByRole(c.role, { name: c.name }).first();
         if (await loc.isVisible({ timeout: 800 }).catch(() => false)) {
-          await loc.click({ timeout });
+          await loc.scrollIntoViewIfNeeded().catch(() => undefined);
+          await loc.click({ timeout, force: true });
           return true;
         }
       } else if ("text" in c) {
         const loc = page.getByText(c.text).first();
         if (await loc.isVisible({ timeout: 800 }).catch(() => false)) {
-          await loc.click({ timeout });
+          await loc.scrollIntoViewIfNeeded().catch(() => undefined);
+          await loc.click({ timeout, force: true });
           return true;
         }
       }
@@ -191,6 +193,14 @@ async function isLongShortVisible(page: import("playwright").Page): Promise<bool
       }
     }
   }
+  // YOLO sometimes labels the ticket CTA differently once connected
+  for (const re of [/place\s*(long|short|trade)/i, /^long$/i, /^short$/i]) {
+    try {
+      if (await page.getByRole("button", { name: re }).first().isVisible({ timeout: 400 })) return true;
+    } catch {
+      /* next */
+    }
+  }
   return false;
 }
 
@@ -232,9 +242,20 @@ export class YoloDriver {
       }
 
       const launchArgs = ["--disable-blink-features=AutomationControlled"];
-      if (this.cfg.userDataDir) {
-        const ctx = await pw.chromium.launchPersistentContext(this.cfg.userDataDir, {
-          headless: this.cfg.headless,
+      const extDir = path.join(ROOT, "extensions", "yolo-phantom");
+      const loadExt =
+        envFlag("YOLO_LOAD_EXTENSION", false) && fs.existsSync(path.join(extDir, "manifest.json"));
+      if (loadExt) {
+        // Extensions require headed (or headless=new) + persistent context
+        launchArgs.push(`--disable-extensions-except=${extDir}`);
+        launchArgs.push(`--load-extension=${extDir}`);
+        console.log("[yolo] loading shim extension", extDir);
+      }
+      if (this.cfg.userDataDir || loadExt) {
+        const userData = this.cfg.userDataDir || path.join(ROOT, "data", "yolo-profile");
+        ensureDir(userData);
+        const ctx = await pw.chromium.launchPersistentContext(userData, {
+          headless: loadExt ? false : this.cfg.headless,
           viewport: { width: 1440, height: 900 },
           args: launchArgs,
         });
@@ -250,6 +271,19 @@ export class YoloDriver {
         if (this.injected) await this.injected.attach(this.page);
       }
 
+      if (this.injected) {
+        // Seed pubkey for optional extension content-script (never the secret)
+        await this.page.addInitScript(
+          ({ pk }: { pk: string }) => {
+            try {
+              localStorage.setItem("__yolo_bot_pubkey", pk);
+            } catch {
+              /* ignore */
+            }
+          },
+          { pk: this.injected.publicKey }
+        );
+      }
       await this.page.goto(this.cfg.url, {
         waitUntil: "domcontentloaded",
         timeout: this.cfg.timeoutMs,
@@ -554,7 +588,14 @@ export class YoloDriver {
           return { ...conn, action: "open", side };
         }
       }
-      await tryClickRole(page, SELECTORS.marketSol, 3_000);
+      // Avoid re-clicking SOL when already selected — it opens the market menu and covers Long/Short.
+      const onSol = /market=SOL/i.test(page.url());
+      if (!onSol) {
+        await tryClickRole(page, SELECTORS.marketSol, 3_000);
+        await page.keyboard.press("Escape").catch(() => undefined);
+      } else {
+        await page.keyboard.press("Escape").catch(() => undefined);
+      }
       await fillCollateral(page, collateral);
       if (leverage <= 500) {
         for (let i = 0; i < 8; i++) {
@@ -562,8 +603,25 @@ export class YoloDriver {
           if (!hit) break;
         }
       }
+      // Dismiss any leftover market/leverage popovers before trade click.
+      await page.keyboard.press("Escape").catch(() => undefined);
+      await page.waitForTimeout(300);
       const btns = side === "LONG" ? SELECTORS.longButton : SELECTORS.shortButton;
-      const clicked = await tryClickRole(page, btns, 5_000);
+      let clicked = await tryClickRole(page, btns, 5_000);
+      if (!clicked) {
+        // Last-resort: force-click visible Long/Short text in the trade panel.
+        const label = side === "LONG" ? /\bLONG\b/i : /\bSHORT\b/i;
+        try {
+          const loc = page.getByText(label).last();
+          if (await loc.isVisible({ timeout: 1_500 }).catch(() => false)) {
+            await loc.scrollIntoViewIfNeeded().catch(() => undefined);
+            await loc.click({ timeout: 5_000, force: true });
+            clicked = true;
+          }
+        } catch {
+          /* keep false */
+        }
+      }
       if (!clicked) {
         const connectVisible = await isConnectVisible(page);
         const shotPath = await shot(page, this.cfg.screenshotDir, `fail-${side.toLowerCase()}`);

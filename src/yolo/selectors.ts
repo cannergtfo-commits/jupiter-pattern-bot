@@ -27,7 +27,9 @@
  * `npm run bot -- yolo probe` and treat misses as fragile, not proof of absence.
  * Docs remain the source of truth for button copy.
  */
-export const YOLO_URL_SOL_CLASSIC = "https://jup.ag/yolo/?market=SOL&mode=classic";
+export const YOLO_URL_SOL_CLASSIC = "https://yolo.jup.ag/?market=SOL&mode=classic";
+/** @deprecated alias — prefer yolo.jup.ag (WalletConnect metadata host) */
+export const YOLO_URL_SOL_CLASSIC_LEGACY = "https://jup.ag/yolo/?market=SOL&mode=classic";
 
 /** Role/text candidates tried in order. First match wins. */
 export const SELECTORS = {
@@ -91,14 +93,24 @@ export const SELECTORS = {
     { role: "button" as const, name: /^\+$/ },
     { role: "button" as const, name: /increase\s*leverage/i },
   ],
-  /** Docs: click "Long" or "Short" */
+  /** Docs: click "Long" or "Short" — text/CSS fallbacks when a11y name misses */
   longButton: [
     { role: "button" as const, name: /^long$/i },
+    { role: "button" as const, name: /\blong\b/i },
     { role: "button" as const, name: /go\s*long/i },
+    { text: /^long$/i },
+    'button:has-text("LONG")',
+    'button:has-text("Long")',
+    '[role="button"]:has-text("LONG")',
   ],
   shortButton: [
     { role: "button" as const, name: /^short$/i },
+    { role: "button" as const, name: /\bshort\b/i },
     { role: "button" as const, name: /go\s*short/i },
+    { text: /^short$/i },
+    'button:has-text("SHORT")',
+    'button:has-text("Short")',
+    '[role="button"]:has-text("SHORT")',
   ],
   /**
    * Positions-row Close. During 15s lockout may be "Close in Ns" (disabled).
@@ -108,6 +120,8 @@ export const SELECTORS = {
     { role: "button" as const, name: /^close$/i },
     { role: "button" as const, name: /^close\s*position$/i },
     { role: "button" as const, name: /close\s*position/i },
+    "button:has-text(\"Close\")",
+    "[role=\"button\"]:has-text(\"Close\")",
   ],
   /** Under-chart close for the focused position */
   closePositionUnderChart: [

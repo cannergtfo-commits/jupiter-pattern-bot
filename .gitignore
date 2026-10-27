@@ -42,3 +42,7 @@ data/yolo-screenshots/*
 data/yolo-runs/
 data/paper-*.json
 !data/.gitkeep
+
+# YOLO persistent browser profile (may hold session; never commit)
+data/yolo-profile/
+extensions/yolo-phantom/.local/

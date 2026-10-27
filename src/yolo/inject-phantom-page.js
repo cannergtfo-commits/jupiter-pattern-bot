@@ -48,6 +48,9 @@
 
     function makePk(b58) {
       var bytes = b58Decode(b58);
+      if (bytes.length !== 32) {
+        console.error("[yolo-inject] pubkey decode len", bytes.length);
+      }
       return {
         toBase58: function () {
           return b58;
@@ -55,8 +58,21 @@
         toString: function () {
           return b58;
         },
+        toJSON: function () {
+          return b58;
+        },
         toBytes: function () {
           return bytes;
+        },
+        toBuffer: function () {
+          return bytes;
+        },
+        equals: function (other) {
+          try {
+            return String(other) === b58 || (other && other.toBase58 && other.toBase58() === b58);
+          } catch (e) {
+            return false;
+          }
         },
       };
     }
