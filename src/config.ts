@@ -49,8 +49,12 @@ export interface AppConfig {
   dryRun: boolean;
   scanIntervalMs: number;
   maxOpenPositions: number;
-  /** Max seconds to hold before time-exit (default 5 minutes). 0 disables. */
+  /** Soft max hold in minutes (0 disables). Prefer maxHoldSeconds for short scalps. */
   maxHoldMinutes: number;
+  /** Hard max hold in seconds (e.g. 40). 0 disables. Takes effect alongside minutes — effective cap is the tighter of the two when both set. */
+  maxHoldSeconds: number;
+  /** How often to poll open positions for TP/SL/max-hold (ms). Keep << maxHoldSeconds. */
+  positionPollMs: number;
   /** If >0, exit when hold >= this many minutes AND pnl% <= earlyRedCutMaxPct (theory: stale reds). 0 disables. */
   earlyRedCutMinutes: number;
   /** PnL % threshold for early red cut (default 0 = still red or flat). */
@@ -207,7 +211,9 @@ export function loadConfig(): AppConfig {
     dryRun: bool(process.env.DRY_RUN, file.dryRun ?? true),
     scanIntervalMs: num(process.env.SCAN_INTERVAL_MS, file.scanIntervalMs ?? 30_000),
     maxOpenPositions: num(process.env.MAX_OPEN_POSITIONS, file.maxOpenPositions ?? 3),
-    maxHoldMinutes: num(process.env.MAX_HOLD_MINUTES, file.maxHoldMinutes ?? 5),
+    maxHoldMinutes: num(process.env.MAX_HOLD_MINUTES, file.maxHoldMinutes ?? 0),
+    maxHoldSeconds: num(process.env.MAX_HOLD_SECONDS, file.maxHoldSeconds ?? 40),
+    positionPollMs: num(process.env.POSITION_POLL_MS, file.positionPollMs ?? 5_000),
     earlyRedCutMinutes: num(process.env.EARLY_RED_CUT_MINUTES, file.earlyRedCutMinutes ?? 0),
     earlyRedCutMaxPct: num(process.env.EARLY_RED_CUT_MAX_PCT, file.earlyRedCutMaxPct ?? 0),
     minPreferredTagCount: num(process.env.MIN_PREFERRED_TAG_COUNT, file.minPreferredTagCount ?? 0),
@@ -316,4 +322,6 @@ export function saveConfigPartial(partial: Record<string, unknown>): void {
 export const SOL_MINT = "So11111111111111111111111111111111111111112";
 export const WALLET_DIR = path.join(ROOT, ".wallet");
 export const KEYPAIR_PATH = path.join(WALLET_DIR, "keypair.json");
+export const KEYSTORE_PATH = path.join(WALLET_DIR, "keystore.json");
+export const ADDRESS_PATH = path.join(WALLET_DIR, "address.txt");
 export const POSITIONS_PATH = path.join(ROOT, "data", "positions.json");

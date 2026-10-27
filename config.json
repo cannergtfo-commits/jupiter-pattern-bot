@@ -33,7 +33,10 @@
   },
   "twitter": {
     "enabled": false,
-    "keywords": ["pump", "solana"],
+    "keywords": [
+      "pump",
+      "solana"
+    ],
     "minMentionsHeuristic": 3,
     "useMockWhenNoKey": true,
     "autoWatchOpenMints": false,
@@ -62,8 +65,8 @@
     "3crows",
     "hang_man"
   ],
-  "maxHoldMinutes": 15,
-  "earlyRedCutMinutes": 3,
+  "maxHoldMinutes": 0,
+  "earlyRedCutMinutes": 0,
   "earlyRedCutMaxPct": 0,
   "minPreferredTagCount": 2,
   "reentryCooldownMinutes": 10,
@@ -77,5 +80,7 @@
     "maru_bull",
     "3soldiers"
   ],
-  "maxEntriesPerMint": 2
+  "maxEntriesPerMint": 2,
+  "maxHoldSeconds": 40,
+  "positionPollMs": 5000
 }

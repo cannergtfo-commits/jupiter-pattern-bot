@@ -9,10 +9,12 @@ import { loadConfig, ROOT } from "./config.js";
 import { loadBotState, markTick, markTicking } from "./bot-state.js";
 import { monitorPositions, scanOnce, tryEnter } from "./strategy.js";
 import { sortForTryEnter } from "./confluence.js";
+import { printScanRecommendation } from "./recommend.js";
 
 const LOCK_PATH = path.join(ROOT, "data", "engine.lock");
 
 let timer: NodeJS.Timeout | null = null;
+let monitorTimer: NodeJS.Timeout | null = null;
 let running = false;
 let holdsLock = false;
 
@@ -72,18 +74,22 @@ async function tickOnce(): Promise<void> {
   markTicking(true);
   try {
     await monitorPositions();
+    const cfg = loadConfig();
     const rows = await scanOnce();
-    // High-confluence first (scanOnce sorts by score)
+    const rec = printScanRecommendation(rows, cfg);
     const passes = sortForTryEnter(
       rows.filter((r) => r.filterPass),
-      loadConfig()
+      cfg
     );
-    for (const r of passes.slice(0, 5)) {
-      if (!loadBotState().armed) break;
-      await tryEnter(r.token);
+    // Spot path only opens on LONG. SHORT/DO NOTHING = signal (YOLO has no public API).
+    if (rec.action === "LONG") {
+      for (const r of passes.slice(0, 5)) {
+        if (!loadBotState().armed) break;
+        await tryEnter(r.token);
+      }
     }
     markTick(
-      `armed tick: checked=${rows.length} pass=${passes.length} topConf=${passes[0]?.confluenceScore ?? "—"}`
+      `armed tick: rec=${rec.action} checked=${rows.length} pass=${passes.length} topConf=${passes[0]?.confluenceScore ?? "—"}`
     );
   } catch (e) {
     markTick("tick failed", (e as Error).message);
@@ -104,16 +110,26 @@ export function startEngine(): void {
   }
   const cfg = loadConfig();
   const interval = Math.max(5_000, cfg.scanIntervalMs);
+  const poll = Math.max(1_000, Math.min(cfg.positionPollMs || 5_000, 10_000));
   void tickOnce();
   timer = setInterval(() => {
     void tickOnce();
   }, interval);
+  // Separate monitor so maxHoldSeconds (e.g. 40s) is honored between scans
+  monitorTimer = setInterval(() => {
+    if (!loadBotState().armed) return;
+    void monitorPositions().catch(() => undefined);
+  }, poll);
 }
 
 export function stopEngine(): void {
   if (timer) {
     clearInterval(timer);
     timer = null;
+  }
+  if (monitorTimer) {
+    clearInterval(monitorTimer);
+    monitorTimer = null;
   }
   running = false;
   markTicking(false);

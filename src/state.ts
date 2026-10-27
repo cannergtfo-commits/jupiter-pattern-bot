@@ -53,7 +53,9 @@ export interface AppSnapshot {
     slippageBps: number;
     maxOpenPositions: number;
     maxHoldMinutes: number;
+    maxHoldSeconds: number;
     scanIntervalMs: number;
+    positionPollMs: number;
     filters: ReturnType<typeof loadConfig>["filters"];
     filtersText: string;
   };
@@ -139,7 +141,9 @@ export async function buildSnapshot(): Promise<AppSnapshot> {
       slippageBps: config.slippageBps,
       maxOpenPositions: config.maxOpenPositions,
       maxHoldMinutes: config.maxHoldMinutes,
+      maxHoldSeconds: config.maxHoldSeconds,
       scanIntervalMs: config.scanIntervalMs,
+      positionPollMs: config.positionPollMs,
       filters: config.filters,
       filtersText: describeFilters(config.filters),
     },

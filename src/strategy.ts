@@ -42,6 +42,7 @@ import {
 
 import { recordClosedTradeLesson } from "./learning.js";
 import type { EntryMeta } from "./positions.js";
+import { printScanRecommendation } from "./recommend.js";
 
 
 function setupOpts(cfg: ReturnType<typeof loadConfig>) {
@@ -570,8 +571,10 @@ export async function monitorPositions(): Promise<void> {
 
     const cfg = loadConfig();
     const holdMs = Date.now() - Date.parse(pos.openedAt);
-    const maxHoldMs =
-      cfg.maxHoldMinutes > 0 ? cfg.maxHoldMinutes * 60_000 : Number.POSITIVE_INFINITY;
+    const caps: number[] = [];
+    if (cfg.maxHoldSeconds > 0) caps.push(cfg.maxHoldSeconds * 1000);
+    if (cfg.maxHoldMinutes > 0) caps.push(cfg.maxHoldMinutes * 60_000);
+    const maxHoldMs = caps.length ? Math.min(...caps) : Number.POSITIVE_INFINITY;
 
     const earlyCutMs =
       cfg.earlyRedCutMinutes > 0 ? cfg.earlyRedCutMinutes * 60_000 : Number.POSITIVE_INFINITY;
@@ -584,17 +587,17 @@ export async function monitorPositions(): Promise<void> {
       await exitPosition(pos, "tp", price);
     } else if (changePct <= -pos.stopLossPct) {
       await exitPosition(pos, "sl", price);
+    } else if (Number.isFinite(holdMs) && holdMs >= maxHoldMs) {
+      console.log(
+        chalk.yellow(
+          `  ${pos.symbol}: max hold ${Math.round(maxHoldMs / 1000)}s reached (${Math.round(holdMs / 1000)}s) — time exit`
+        )
+      );
+      await exitPosition(pos, "time", price);
     } else if (earlyCut) {
       console.log(
         chalk.yellow(
           `  ${pos.symbol}: early red cut @${cfg.earlyRedCutMinutes}m (pnl ${changePct.toFixed(2)}% ≤ ${cfg.earlyRedCutMaxPct}%) — time exit`
-        )
-      );
-      await exitPosition(pos, "time", price);
-    } else if (Number.isFinite(holdMs) && holdMs >= maxHoldMs) {
-      console.log(
-        chalk.yellow(
-          `  ${pos.symbol}: max hold ${cfg.maxHoldMinutes}m reached (${Math.round(holdMs / 1000)}s) — time exit`
         )
       );
       await exitPosition(pos, "time", price);
@@ -650,13 +653,19 @@ export async function runLoop(opts: { once?: boolean } = {}): Promise<void> {
   const cfg = loadConfig();
   const { setArmed, markTick } = await import("./bot-state.js");
   setArmed(true);
+  const holdLabel =
+    cfg.maxHoldSeconds > 0
+      ? `${cfg.maxHoldSeconds}s hard`
+      : cfg.maxHoldMinutes > 0
+        ? `${cfg.maxHoldMinutes}m`
+        : "off";
   console.log(
     chalk.bold(
-      `\nBot run loop — BOT ON — dryRun=${cfg.dryRun} buy=${cfg.buyAmountSol} SOL TP=+${cfg.takeProfitPct}% SL=-${cfg.stopLossPct}% interval=${cfg.scanIntervalMs}ms confluence≥${cfg.minConfluenceSources} riskOn=${cfg.riskOnTest}\n`
+      `\nBot run loop — BOT ON — dryRun=${cfg.dryRun} buy=${cfg.buyAmountSol} SOL TP=+${cfg.takeProfitPct}% SL=-${cfg.stopLossPct}% maxHold=${holdLabel} scan=${cfg.scanIntervalMs}ms poll=${cfg.positionPollMs}ms\n`
     )
   );
 
-  const tick = async () => {
+  const scanTick = async () => {
     console.log(
       chalk.gray(
         `\n── scan ${new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles" })} PT ──`
@@ -665,16 +674,22 @@ export async function runLoop(opts: { once?: boolean } = {}): Promise<void> {
     try {
       await monitorPositions();
       const rows = await scanOnce();
+      const rec = printScanRecommendation(rows, cfg);
       // High-confluence passes first (scanOnce already sorts by score)
       const passes = sortForTryEnter(
         rows.filter((r) => r.filterPass),
         cfg
       );
       console.log(chalk.bold(`Candidates checked=${rows.length} pass=${passes.length}`));
-      for (const r of passes.slice(0, 5)) {
-        await tryEnter(r.token);
+      // Only open new longs when recommendation is LONG (SHORT/DO NOTHING = no new entries)
+      if (rec.action === "LONG") {
+        for (const r of passes.slice(0, 5)) {
+          await tryEnter(r.token);
+        }
+      } else {
+        console.log(chalk.dim(`Skipping new entries this cycle (rec=${rec.action})`));
       }
-      markTick(`cli run: checked=${rows.length} pass=${passes.length}`);
+      markTick(`cli run: rec=${rec.action} checked=${rows.length} pass=${passes.length}`);
     } catch (e) {
       console.log(chalk.red(`Tick error: ${(e as Error).message}`));
       markTick("cli run failed", (e as Error).message);
@@ -682,11 +697,22 @@ export async function runLoop(opts: { once?: boolean } = {}): Promise<void> {
   };
 
   try {
-    await tick();
+    await scanTick();
     if (opts.once) return;
+    let lastScan = Date.now();
     for (;;) {
-      await sleep(cfg.scanIntervalMs);
-      await tick();
+      const poll = Math.max(1_000, Math.min(cfg.positionPollMs || 5_000, 10_000));
+      await sleep(poll);
+      // Always poll open positions so 40s max-hold is honored between scans
+      try {
+        await monitorPositions();
+      } catch (e) {
+        console.log(chalk.red(`Monitor error: ${(e as Error).message}`));
+      }
+      if (Date.now() - lastScan >= cfg.scanIntervalMs) {
+        lastScan = Date.now();
+        await scanTick();
+      }
     }
   } finally {
     if (opts.once) setArmed(false);

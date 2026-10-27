@@ -5,6 +5,7 @@ import { loadConfig, saveFilters } from "./config.js";
 import { describeFilters, parseFilterSet } from "./filters.js";
 import {
   createWallet,
+  encryptExistingWallet,
   getAddress,
   getBalanceSol,
   withdrawSol,
@@ -35,14 +36,35 @@ const wallet = program.command("wallet").description("Manage the bot wallet");
 
 wallet
   .command("create")
-  .description("Generate a new keypair under .wallet/ (0600)")
+  .description("Generate a local wallet under .wallet/ (0600; encrypt if WALLET_PASSWORD set)")
   .action(() => {
     try {
-      const { publicKey, path } = createWallet();
-      console.log(chalk.green("Wallet created."));
+      const { publicKey, path, encrypted } = createWallet();
+      console.log(chalk.green(encrypted ? "Encrypted keystore created." : "Wallet created (file mode 0600)."));
       console.log(chalk.bold("Public address:"), publicKey);
-      console.log(chalk.dim(`Keypair file: ${path} (never share this file)`));
-      console.log(chalk.yellow("Fund this address with SOL, then set DRY_RUN=false only when ready."));
+      console.log(chalk.dim(`Secret file: ${path} (never share / never paste into chat)`));
+      console.log(chalk.yellow("Fund this PUBLIC address only. Keep DRY_RUN=true until you intend live trades."));
+    } catch (e) {
+      console.error(chalk.red((e as Error).message));
+      process.exitCode = 1;
+    }
+  });
+
+wallet
+  .command("encrypt")
+  .description("Upgrade plaintext keypair.json → AES-256-GCM keystore (needs WALLET_PASSWORD)")
+  .action(() => {
+    try {
+      const pwd = process.env.WALLET_PASSWORD;
+      if (!pwd) {
+        console.error(chalk.red("Set WALLET_PASSWORD in .env first (gitignored)."));
+        process.exitCode = 1;
+        return;
+      }
+      const { publicKey, path } = encryptExistingWallet(pwd);
+      console.log(chalk.green("Wallet encrypted."));
+      console.log(chalk.bold("Public address:"), publicKey);
+      console.log(chalk.dim(`Keystore: ${path}`));
     } catch (e) {
       console.error(chalk.red((e as Error).message));
       process.exitCode = 1;
@@ -84,15 +106,29 @@ wallet
   .command("withdraw")
   .argument("<pubkey>", "Destination Solana address")
   .argument("<sol>", "Amount of SOL")
-  .description("Send SOL to an external pubkey")
-  .action(async (pubkey: string, solStr: string) => {
+  .option("--yes", "Confirm dest + amount (required)")
+  .description("Send SOL from bot wallet to an external pubkey (requires --yes)")
+  .action(async (pubkey: string, solStr: string, opts: { yes?: boolean }) => {
     try {
       const amount = Number(solStr);
+      if (!(amount > 0) || !Number.isFinite(amount)) {
+        throw new Error("Amount must be a positive number");
+      }
       const cfg = loadConfig();
+      console.log(chalk.bold("Withdraw preview (secret key never shown):"));
+      console.log(`  from:   ${getAddress()}`);
+      console.log(`  to:     ${pubkey}`);
+      console.log(`  amount: ${amount} SOL`);
+      console.log(`  dryRun: ${cfg.dryRun}`);
+      if (!opts.yes) {
+        console.log(chalk.yellow("Re-run with --yes to confirm."));
+        process.exitCode = 1;
+        return;
+      }
       if (cfg.dryRun) {
         console.log(chalk.yellow("DRY_RUN=true — withdraw simulated. Set DRY_RUN=false for live."));
       }
-      const result = await withdrawSol(pubkey, amount);
+      const result = await withdrawSol(pubkey, amount, { confirm: true });
       console.log(chalk.green(result));
     } catch (e) {
       console.error(chalk.red((e as Error).message));
@@ -256,7 +292,18 @@ program
     console.log(`Dry run:      ${cfg.dryRun}`);
     console.log(`Buy amount:   ${cfg.buyAmountSol} SOL (cap ${cfg.maxBuyAmountSol})`);
     console.log(`TP / SL:      +${cfg.takeProfitPct}% / -${cfg.stopLossPct}%`);
-    console.log(`Max hold:     ${cfg.maxHoldMinutes > 0 ? cfg.maxHoldMinutes + "m" : "off"}`);
+    console.log(
+      `Max hold:     ${
+        cfg.maxHoldSeconds > 0
+          ? cfg.maxHoldSeconds + "s hard"
+          : cfg.maxHoldMinutes > 0
+            ? cfg.maxHoldMinutes + "m"
+            : "off"
+      }`
+    );
+    console.log(`Scan / poll:  ${cfg.scanIntervalMs}ms / ${cfg.positionPollMs}ms`);
+    // wallet enc from info above
+    console.log(`Wallet enc:   ${info.encrypted ? "keystore (AES-GCM)" : info.exists ? "keypair.json 0600" : "none"}`);
     console.log(`Early red:    ${cfg.earlyRedCutMinutes > 0 ? cfg.earlyRedCutMinutes + "m if ≤" + cfg.earlyRedCutMaxPct + "%" : "off"}`);
     console.log(`Min pref tags:${cfg.minPreferredTagCount > 0 ? cfg.minPreferredTagCount : "off"}`);
     console.log(`Reentry CD:   ${cfg.reentryCooldownMinutes > 0 ? cfg.reentryCooldownMinutes + "m (pump bypass 5m≥" + cfg.reentryVolumePumpPct + "% spike≥" + cfg.reentryVolumeSpikeMin + "x)" : "off"}`);
