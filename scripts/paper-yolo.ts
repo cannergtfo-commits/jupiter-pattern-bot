@@ -59,6 +59,19 @@ interface ClosedTrade {
   lesson: string;
 }
 
+function numFlag(argv: string[], flag: string, envKeys: string[], fallback: number): number {
+  const i = argv.indexOf(flag);
+  if (i >= 0 && argv[i + 1] && !argv[i + 1]!.startsWith("--")) {
+    const n = Number(argv[i + 1]);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  for (const k of envKeys) {
+    const e = process.env[k];
+    if (e != null && e !== "" && Number.isFinite(Number(e))) return Number(e);
+  }
+  return fallback;
+}
+
 function parseArgs(argv: string[]): {
   minutes: number;
   scanSec: number;
@@ -70,41 +83,28 @@ function parseArgs(argv: string[]): {
   collateral: number;
   forceMin: number;
 } {
-  const get = (flag: string, env: string, fallback: number): number => {
-    const i = argv.indexOf(flag);
-    if (i >= 0 && argv[i + 1] && !argv[i + 1]!.startsWith("--")) {
-      const n = Number(argv[i + 1]);
-      if (Number.isFinite(n) && n > 0) return n;
-    }
-    const e = process.env[env];
-    if (e && Number.isFinite(Number(e))) return Number(e);
-    return fallback;
-  };
-
-  // Duration: --minutes wins; else PAPER_DURATION_MS; else 5 min
-  let minutes = get("--minutes", "PAPER_MINUTES", 5);
-  if (process.env.PAPER_DURATION_MS && !argv.includes("--minutes")) {
-    minutes = Number(process.env.PAPER_DURATION_MS) / 60_000;
+  let minutes = numFlag(argv, "--minutes", ["PAPER_MINUTES"], 5);
+  if (!argv.includes("--minutes") && process.env.PAPER_DURATION_MS) {
+    const ms = Number(process.env.PAPER_DURATION_MS);
+    if (Number.isFinite(ms) && ms > 0) minutes = ms / 60_000;
   }
+
+  // Prefer seconds flags; allow legacy *_MS env by converting when value looks like ms
+  const asSec = (n: number, defaultSec: number): number => {
+    if (!Number.isFinite(n) || n <= 0) return defaultSec;
+    return n > 200 ? n / 1000 : n; // 30000 → 30s
+  };
 
   return {
     minutes: Math.max(1, Math.min(60, minutes)),
-    scanSec: get("--scan-sec", "PAPER_SCAN_MS", 30) > 100
-      ? get("--scan-sec", "PAPER_SCAN_MS", 30_000) / 1000
-      : get("--scan-sec", "PAPER_SCAN_SEC", 30),
-    pollSec: (() => {
-      const raw = get("--poll-sec", "PAPER_POLL_MS", 5);
-      return raw > 100 ? raw / 1000 : get("--poll-sec", "PAPER_POLL_SEC", 5);
-    })(),
-    maxHoldSec: (() => {
-      const raw = get("--max-hold-sec", "PAPER_MAX_HOLD_MS", 40);
-      return raw > 200 ? raw / 1000 : get("--max-hold-sec", "PAPER_MAX_HOLD_SEC", 40);
-    })(),
-    tp: get("--tp", "PAPER_TP_PCT", 50),
-    sl: get("--sl", "PAPER_SL_PCT", 20),
-    leverage: get("--leverage", "PAPER_LEVERAGE", 500),
-    collateral: get("--collateral", "PAPER_COLLATERAL", 5),
-    forceMin: get("--force-min", "PAPER_FORCE_MIN", 2),
+    scanSec: asSec(numFlag(argv, "--scan-sec", ["PAPER_SCAN_SEC", "PAPER_SCAN_MS"], 30), 30),
+    pollSec: asSec(numFlag(argv, "--poll-sec", ["PAPER_POLL_SEC", "PAPER_POLL_MS"], 5), 5),
+    maxHoldSec: asSec(numFlag(argv, "--max-hold-sec", ["PAPER_MAX_HOLD_SEC", "PAPER_MAX_HOLD_MS"], 40), 40),
+    tp: numFlag(argv, "--tp", ["PAPER_TP_PCT"], 50),
+    sl: numFlag(argv, "--sl", ["PAPER_SL_PCT"], 20),
+    leverage: numFlag(argv, "--leverage", ["PAPER_LEVERAGE"], 500),
+    collateral: numFlag(argv, "--collateral", ["PAPER_COLLATERAL"], 5),
+    forceMin: numFlag(argv, "--force-min", ["PAPER_FORCE_MIN"], 2),
   };
 }
 
@@ -152,7 +152,7 @@ function closePos(pos: PaperPos, mark: number, reason: CloseReason): ClosedTrade
   return base;
 }
 
-function appendLearning(trade: ClosedTrade, sessionId: string): void {
+function appendLearning(trade: ClosedTrade, sessionId: string, leverage: number): void {
   fs.mkdirSync(DATA, { recursive: true });
   const row = {
     at: trade.closedAt,
@@ -167,11 +167,11 @@ function appendLearning(trade: ClosedTrade, sessionId: string): void {
     collateralPnlPct: trade.collateralPnlPct,
     pnlUsd: trade.pnlUsd,
     holdSec: trade.holdSec,
-    leverage: undefined as number | undefined,
     tags: trade.tags,
     score: trade.score,
     bias: trade.bias,
     forced: trade.forced,
+    leverage,
     lesson: trade.lesson,
     signalReason: trade.signalReason,
   };
@@ -240,7 +240,7 @@ async function main(): Promise<void> {
       if (reason) {
         const t = closePos(open, mark, reason);
         closed.push(t);
-        appendLearning(t, sessionId);
+        appendLearning(t, sessionId, LEVERAGE);
         console.log(JSON.stringify({ event: "close", ...t }));
         open = null;
       } else {
@@ -357,7 +357,7 @@ async function main(): Promise<void> {
     const mark = marks[marks.length - 1]!;
     const t = closePos(open, mark, "time");
     closed.push(t);
-    appendLearning(t, sessionId);
+    appendLearning(t, sessionId, LEVERAGE);
     console.log(JSON.stringify({ event: "close_session_end", ...t }));
     open = null;
   }

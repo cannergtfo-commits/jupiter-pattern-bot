@@ -45,8 +45,13 @@ npm run bot -- yolo status
 
 ### Mark-proxy paper (no browser)
 
+5–15 minute sessions. Scans every 30s (LONG/SHORT/DO NOTHING), TP+50%/SL−20%, hard close 40s. Writes `data/paper-yolo-session.json` + `data/paper-learnings.jsonl`. See **[docs/PAPER.md](./docs/PAPER.md)**.
+
 ```bash
-npm run paper
+npm run paper                         # 5 min
+npm run paper -- --minutes 10
+npm run paper -- --minutes 15 --force-min 4
+npm run bot -- yolo paper --minutes 10
 ```
 
 ### Spot loop (Jupiter swap API)

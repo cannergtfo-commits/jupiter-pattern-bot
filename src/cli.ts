@@ -501,14 +501,27 @@ yoloCmd
 
 yoloCmd
   .command("paper")
-  .description("5-minute mark-proxy paper session (no browser) — npm run paper")
-  .action(async () => {
+  .description("Mark-proxy paper session (no browser) — LONG/SHORT, TP50/SL20, 40s max hold")
+  .option("--minutes <n>", "Session length in minutes (5–15 typical)", "5")
+  .option("--force-min <n>", "Force at least N trades if signals quiet", "2")
+  .action(async (opts: { minutes?: string; forceMin?: string }) => {
     console.log(chalk.dim("Delegating to scripts/paper-yolo.ts …"));
     const { spawn } = await import("node:child_process");
-    const child = spawn("node", ["--import", "tsx", "scripts/paper-yolo.ts"], {
+    const { fileURLToPath } = await import("node:url");
+    const root = fileURLToPath(new URL("..", import.meta.url));
+    const args = [
+      "--import",
+      "tsx",
+      "scripts/paper-yolo.ts",
+      "--minutes",
+      String(opts.minutes || "5"),
+      "--force-min",
+      String(opts.forceMin || "2"),
+    ];
+    const child = spawn("node", args, {
       stdio: "inherit",
-      cwd: new URL("..", import.meta.url).pathname,
-      env: process.env,
+      cwd: root,
+      env: { ...process.env, DRY_RUN: "true" },
     });
     await new Promise<void>((resolve, reject) => {
       child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error("paper exit " + code))));
