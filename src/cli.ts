@@ -531,23 +531,34 @@ yoloCmd
   .command("paper")
   .description("Mark-proxy paper: 30s scan LONG/SHORT/DO NOTHING + 40s max hold (no browser)")
   .option("--minutes <n>", "Session length in minutes", "5")
-  .option("--force-min <n>", "Force at least N trades if signals quiet", "3")
+  .option("--force-min <n>", "Force at least N trades if signals quiet", "2")
   .action(async (opts: { minutes?: string; forceMin?: string }) => {
     console.log(chalk.dim("Delegating to scripts/paper-yolo.ts …"));
     const { spawn } = await import("node:child_process");
     const { fileURLToPath } = await import("node:url");
     const root = fileURLToPath(new URL("..", import.meta.url));
-    const minutes = Number(opts.minutes) || 5;
-    const child = spawn("node", ["--import", "tsx", "scripts/paper-yolo.ts"], {
-      stdio: "inherit",
-      cwd: root,
-      env: {
-        ...process.env,
-        DRY_RUN: "true",
-        PAPER_DURATION_MS: String(Math.round(minutes * 60_000)),
-        PAPER_FORCE_MIN: String(opts.forceMin || "3"),
-      },
-    });
+    const minutes = String(opts.minutes || "5");
+    const forceMin = String(opts.forceMin || "2");
+    const child = spawn(
+      "node",
+      [
+        "--import",
+        "tsx",
+        "scripts/paper-yolo.ts",
+        "--minutes",
+        minutes,
+        "--force-min",
+        forceMin,
+      ],
+      {
+        stdio: "inherit",
+        cwd: root,
+        env: {
+          ...process.env,
+          DRY_RUN: "true",
+        },
+      }
+    );
     await new Promise<void>((resolve, reject) => {
       child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error("paper exit " + code))));
     });

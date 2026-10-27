@@ -37,7 +37,7 @@ describe("decidePaperSignal", () => {
 describe("decidePaperExit + collateral PnL", () => {
   it("TP fires on collateral PnL at leverage", () => {
     // LONG: +0.11% price * 500x ≈ +55% collateral (clear of float edge at 50%)
-    const mark = 100 * 1.0011;
+    const mark = 100.12; // +0.12% → +60% coll @ 500x (clearly above TP)
     const pnl = collateralPnlPct("LONG", 100, mark, 500);
     assert.ok(pnl >= 50, `pnl=${pnl}`);
     assert.equal(
@@ -57,7 +57,7 @@ describe("decidePaperExit + collateral PnL", () => {
 
   it("SL fires on adverse move", () => {
     // SHORT adverse = price up 0.05% * 500 = -25% coll (clear of -20% edge)
-    const mark = 100 * 1.0005;
+    const mark = 100.05; // +0.05% adverse SHORT → -25% coll @ 500x
     assert.equal(
       decidePaperExit({
         side: "SHORT",

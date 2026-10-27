@@ -345,7 +345,10 @@ export async function runPaperHarness(opts: PaperHarnessOpts = {}): Promise<Pape
         open = {
           id: randomUUID(),
           side: signal,
-          entry: (typeof meta?.markUsd === "number" ? (meta.markUsd as number) : mark),
+          // Enter on the harness mark (same feed as TP/SL poll). Mixing
+          // DexScreener markUsd from skill scan with Jupiter/CG polls caused
+          // instant SL on paper shorts.
+          entry: mark,
           openedAt: now(),
           leverage,
           collateral,

@@ -92,7 +92,8 @@ npm run bot -- wallet withdraw <DEST_PUBKEY> <AMOUNT_SOL> --yes # confirm
 | `src/yolo/scan-sol.ts` | SOL PA → LONG/SHORT/DO NOTHING |
 | `src/yolo/monitor.ts` | Off-page TP/SL/40s |
 | `src/yolo/loop.ts` | 30s scan loop |
-| `scripts/paper-yolo.ts` | Mark-proxy paper session |
+| `src/yolo/paper-engine.ts` | Reusable paper harness (30s scan / 40s hold / TP50 / SL20) |
+| `scripts/paper-yolo.ts` | Mark-proxy paper CLI (`--minutes`, skill scans) |
 | `scripts/yolo-dry-run.ts` | Browser dry-run harness |
 
 ## Long / Short selectors (dry-run safe)
