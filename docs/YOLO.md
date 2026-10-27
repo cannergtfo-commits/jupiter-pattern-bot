@@ -12,7 +12,7 @@
 
 ## What this bot implements (Option B — approved)
 
-Brittle **Playwright** driver against [jup.ag/yolo/?market=SOL&mode=classic](https://jup.ag/yolo/?market=SOL&mode=classic):
+Brittle **Playwright** driver against [jup.ag/yolo/?market=SOL&mode=classic](https://yolo.jup.ag/?market=SOL&mode=classic):
 
 | Action | Dry-run (default) | Live (`DRY_RUN=false` **and** `YOLO_LIVE=true`) |
 |--------|-------------------|--------------------------------------------------|
@@ -229,3 +229,27 @@ If inject Connect fails (captcha / wallet modal change):
 2. Hand the box to a human to Connect **their own** wallet in headed Chromium — **do not** ask them to paste the bot private key.
 3. Or fund a wallet they control and point live at that profile instead.
 
+
+
+## Connect proven (box, 2026-10-26 America/Los_Angeles)
+
+Approach: **injected Phantom-compatible `window.solana` / `window.phantom.solana`** signed in Node via `page.exposeFunction`. Secret never enters page JS, screenshots, or chat.
+
+Critical host: use **`https://yolo.jup.ag/?market=SOL&mode=classic`** (not `jup.ag/yolo`) so WalletConnect metadata matches.
+
+```bash
+npm run yolo:connect          # headed DRY_RUN Connect proof
+# public only: 4617n4ihWMAvypgZMTb73Eptgxh4FK1Z9m5649XnpvLP
+```
+
+One live (min **5 JupUSD**, prefer **500x**):
+
+```bash
+npm run yolo:one-live         # sets LIVE briefly, reverts DRY_RUN
+```
+
+Observed: Connect shows `46…LP` chip + LONG/SHORT. One-live opened a 5 JupUSD / 500x LONG; off-page −20% SL fires very fast at 500x (~0.04% adverse mark). UI has 15s close lockout — wait before Close.
+
+**Not used:** MetaMask (EVM). **Not used:** pasting bot private key into Phantom UI.
+
+Optional: `YOLO_LOAD_EXTENSION=true` loads `extensions/yolo-phantom` shim (still needs Node sign bridge).

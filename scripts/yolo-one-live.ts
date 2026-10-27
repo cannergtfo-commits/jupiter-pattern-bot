@@ -84,10 +84,17 @@ async function main() {
               break;
             }
           }
-          // Respect 15s YOLO lockout then close
+          // Respect 15s YOLO lockout then close (UI refuses earlier)
           const age = Date.now() - openedAt;
-          if (age < 15_000) await new Promise((r) => setTimeout(r, 15_000 - age + 500));
-          const closed = await driver.closePosition(posId);
+          if (age < 15_000) {
+            console.log("waiting for 15s YOLO close lockout…");
+            await new Promise((r) => setTimeout(r, 15_000 - age + 800));
+          }
+          let closed = await driver.closePosition(posId);
+          if (!closed.ok && closed.error === "none_open") {
+            // Store may already be finalized by a concurrent monitor — still try UI Close
+            closed = await driver.closePosition();
+          }
           console.log(closed.ok ? closed.message : "CLOSE FAIL " + closed.error);
           const exitMark = await fetchSolMarkUsd();
           const pos = openYoloPositions().find((p) => p.id === posId);

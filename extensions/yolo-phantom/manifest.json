@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Phantom",
+  "version": "1.0.0",
+  "description": "Local YOLO bot wallet shim for Playwright (not the real Phantom store extension).",
+  "permissions": [],
+  "host_permissions": ["https://jup.ag/*", "https://*.jup.ag/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://jup.ag/*", "https://*.jup.ag/*"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ],
+  "action": {
+    "default_title": "YOLO Bot Wallet"
+  }
+}
