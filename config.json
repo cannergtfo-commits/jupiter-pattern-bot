@@ -82,5 +82,8 @@
   ],
   "maxEntriesPerMint": 2,
   "maxHoldSeconds": 40,
-  "positionPollMs": 5000
+  "positionPollMs": 5000,
+  "tradeVenue": "yolo",
+  "yoloCollateral": 5,
+  "yoloLeverage": 500
 }

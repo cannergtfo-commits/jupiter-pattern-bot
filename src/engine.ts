@@ -73,15 +73,52 @@ async function tickOnce(): Promise<void> {
   running = true;
   markTicking(true);
   try {
-    await monitorPositions();
     const cfg = loadConfig();
+    if (cfg.tradeVenue === "yolo") {
+      // YOLO venue: one scan+optional open handled by yolo loop helpers (dry by default)
+      const { scanSolForYolo } = await import("./yolo/scan-sol.js");
+      const { hasOpenYolo } = await import("./yolo/positions-store.js");
+      const { YoloDriver, defaultYoloConfig } = await import("./yolo/driver.js");
+      const { monitorYoloPositions } = await import("./yolo/monitor.js");
+      const live =
+        !cfg.dryRun &&
+        ["1", "true", "yes", "on"].includes(String(process.env.YOLO_LIVE || "").toLowerCase());
+      const driver = new YoloDriver(
+        defaultYoloConfig({
+          dryRun: cfg.dryRun || !live,
+          liveEnabled: live,
+          collateral: cfg.yoloCollateral,
+          leverage: cfg.yoloLeverage,
+          headless: true,
+        })
+      );
+      try {
+        await monitorYoloPositions(driver);
+        const rec = await scanSolForYolo();
+        console.log(`[yolo] >>> ${rec.action} <<< SOL @ $${rec.markUsd.toFixed(4)} — ${rec.reason}`);
+        if (!hasOpenYolo() && (rec.action === "LONG" || rec.action === "SHORT")) {
+          const open = await driver.openPosition({
+            side: rec.action,
+            entryMarkUsd: rec.markUsd,
+            note: rec.reason,
+          });
+          console.log(open.message);
+        }
+        markTick(`yolo tick: rec=${rec.action} mark=${rec.markUsd} dry=${driver.cfg.dryRun}`);
+      } finally {
+        await driver.close();
+      }
+      return;
+    }
+
+    await monitorPositions();
     const rows = await scanOnce();
     const rec = printScanRecommendation(rows, cfg);
     const passes = sortForTryEnter(
       rows.filter((r) => r.filterPass),
       cfg
     );
-    // Spot path only opens on LONG. SHORT/DO NOTHING = signal (YOLO has no public API).
+    // Spot path only opens on LONG. SHORT/DO NOTHING = signal unless TRADE_VENUE=yolo.
     if (rec.action === "LONG") {
       for (const r of passes.slice(0, 5)) {
         if (!loadBotState().armed) break;

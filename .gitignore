@@ -29,3 +29,7 @@ data/engine.lock
 
 # learnings
 data/*.jsonl
+
+# YOLO dry-run screenshots (keep folder)
+data/yolo-screenshots/*
+!data/yolo-screenshots/.gitkeep

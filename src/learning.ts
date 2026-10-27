@@ -338,7 +338,9 @@ export function recordClosedTradeLesson(args: RecordLessonArgs): TradeLesson | n
       reasons.push(`losses=${losses}`);
     }
     if (reasons.length) {
-      addDenylistMint(pos.mint, `${pos.symbol} ${reasons.join("+")}`);
+      if (!(pos.mint.startsWith("YOLO") || pos.symbol.startsWith("YOLO-"))) {
+        addDenylistMint(pos.mint, `${pos.symbol} ${reasons.join("+")}`);
+      }
     }
   } catch (e) {
     console.log(`[learning] auto-denylist skip: ${(e as Error).message}`);

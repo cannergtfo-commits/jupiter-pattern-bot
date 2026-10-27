@@ -1,4 +1,4 @@
-# Jupiter YOLO vs this bot — API reality check
+# Jupiter YOLO browser automation
 
 ## Finding (2026-10-26)
 
@@ -6,27 +6,89 @@
 
 | Product | Long/Short | Public API | Notes |
 |---------|------------|------------|--------|
-| **YOLO** (Labs beta) | Yes (UI) | **No** | 500x–1,000x vs the House; JupUSD collateral; market orders only; **no native TP/SL**; earliest close **15s**; auto-close 72h; Jupiter co-signs opens/closes. Docs: [YOLO overview](https://docs.jup.ag/user-docs/labs/yolo), [trading](https://docs.jup.ag/user-docs/labs/yolo/trading). Probed `api.jup.ag/yolo` / `yolo-api.jup.ag` → 404. |
-| **Jupiter Perps** (JLP) | Yes | **Yes** | Separate product. [Perps API](https://perps-api.jup.ag/v1/docs) + community SDK [`jupiter-perps-api-sdk`](https://github.com/julianfssen/jupiter-perps-api-sdk) (`increasePosition` with `side: "long" \| "short"`). Not YOLO leverage/rules. |
-| **Jupiter Spot Swap** | Long-only | Yes | `api.jup.ag/swap/v2` — buy token / sell to SOL. Cannot open a true short. |
+| **YOLO** (Labs beta) | Yes (UI) | **No** | 500x–1,000x vs the House; JupUSD collateral; market orders only; **no native TP/SL**; earliest close **15s**; auto-close 72h; Jupiter co-signs opens/closes. |
+| **Jupiter Perps** (JLP) | Yes | **Yes** | Separate product — not wired here. |
+| **Jupiter Spot Swap** | Long-only | Yes | Cannot open a true short. |
 
-## What this bot does today
+## What this bot implements (Option B — approved)
 
-1. **Scan every 30s** and print a clear recommendation: **LONG / SHORT / DO NOTHING**.
-2. **Spot path (DRY_RUN default):** may open a spot long only when recommendation is LONG. SHORT is **signal-only** (skip entry / prefer close open long) — we do **not** pretend a spot swap is a YOLO short.
-3. **Max hold 40s** hard cap on monitored positions; TP +50% / SL −20% if hit earlier; position poll ~5s.
-4. Secure local wallet (0600 / optional AES-GCM keystore) + `wallet withdraw <dest> <sol> --yes`.
+Brittle **Playwright** driver against [jup.ag/yolo/?market=SOL&mode=classic](https://jup.ag/yolo/?market=SOL&mode=classic):
 
-## YOLO leverage warning
+| Action | Dry-run (default) | Live (`DRY_RUN=false` **and** `YOLO_LIVE=true`) |
+|--------|-------------------|--------------------------------------------------|
+| Navigate | Load page + screenshot | Same |
+| Open LONG / SHORT | Simulate + log + screenshot; **no click confirm / no sign** | Click Long/Short (wallet must already be connected in persistent profile) |
+| Close | Simulate | Click Close after ≥15s lockout |
+| TP / SL / max hold | Off-page poll of SOL mark; close when hit | Same + UI close |
 
-At 500x–1,000x, ~**0.1–0.2%** adverse price move can **bust** the position (full collateral loss). YOLO has **no stop loss / take profit** in-product. A bot “−20% SL / +50% TP” would require polling and manual close after the 15s lockout — extremely fragile at that leverage. Profits may enter a **House payout queue**.
+### Defaults
 
-## Paths forward (needs user choice)
+- `DRY_RUN=true` — never signs
+- Collateral **5** JupUSD (market minimum = tiny size)
+- Leverage **500x** (lowest offered)
+- Scan every **30s** → LONG / SHORT / DO NOTHING (solana-skill PA on SOL)
+- TP **+50%** / SL **−20%** as **collateral PnL %** ≈ `priceMove% × leverage`
+- Hard max hold **40s** (YOLO also allows close only after 15s)
+- Private key is **never** injected into the browser
 
-| Option | Meaning |
-|--------|---------|
-| **A — Signal-only YOLO** (current) | Bot prints LONG/SHORT; you click on [jup.ag/yolo](https://jup.ag/yolo/?market=SOL&mode=classic). Safest automation boundary. |
-| **B — Browser automation** | Drive the YOLO UI with a signed-in wallet. Brittle, high-risk, needs **explicit user approval**. Not implemented. |
-| **C — Jupiter Perps API** | Real programmatic long/short via `perps-api.jup.ag` (not YOLO). Different risk/leverage. Can be wired if you choose Perps over YOLO. |
+### Extreme risk
 
-**Ask before enabling B or C.** Default remains DRY_RUN + signals.
+At 500x–1,000x, ~**0.1–0.2%** adverse price move **busts** the position (full collateral loss). A “−20% collateral SL” is only a **0.04%** adverse move at 500x — often unreachable before bust if the UI/poll lags. Treat YOLO automation as experimental.
+
+## UI fragility (expect breakage)
+
+See `src/yolo/selectors.ts`. Button labels, DOM, terms modals, and maintenance banners change without notice. Fill price is Pyth Pro ~2s after submit, not the on-screen quote. Captcha / wallet popups may need headed mode + a human.
+
+## How to run (dry-run only until you go live)
+
+```bash
+npm install
+npx playwright install chromium   # once
+npm run build
+
+# Short browser dry-run (screenshots under data/yolo-screenshots/)
+npm run bot -- yolo dry-run --seconds 90
+# or
+npm run yolo:dry-run
+
+# Status / positions
+npm run bot -- yolo status
+
+# Mark-proxy paper (no browser)
+npm run paper
+```
+
+**Live clicks (not recommended; user must opt in):**
+
+```bash
+# 1) Create a persistent Chromium profile and connect wallet once (headed)
+# 2) Then:
+export DRY_RUN=false
+export YOLO_LIVE=true
+export YOLO_USER_DATA_DIR=/path/to/yolo-profile
+export YOLO_HEADLESS=false
+npm run bot -- yolo run --seconds 120
+```
+
+The driver **does not** load `.wallet/keypair.json` into the page. Wallet signing is only via an already-connected extension in `YOLO_USER_DATA_DIR`.
+
+## Withdraw
+
+Use the existing CLI (unchanged):
+
+```bash
+npm run bot -- wallet withdraw <DEST_PUBKEY> <AMOUNT_SOL>       # preview
+npm run bot -- wallet withdraw <DEST_PUBKEY> <AMOUNT_SOL> --yes # confirm
+```
+
+## Related code
+
+| Path | Role |
+|------|------|
+| `src/yolo/driver.ts` | Playwright + dry-run mock |
+| `src/yolo/selectors.ts` | Fragile UI selectors |
+| `src/yolo/scan-sol.ts` | SOL PA → LONG/SHORT/DO NOTHING |
+| `src/yolo/monitor.ts` | Off-page TP/SL/40s |
+| `src/yolo/loop.ts` | 30s scan loop |
+| `scripts/paper-yolo.ts` | Mark-proxy paper session |
+| `scripts/yolo-dry-run.ts` | Browser dry-run harness |

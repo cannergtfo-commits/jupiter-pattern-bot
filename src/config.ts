@@ -108,6 +108,15 @@ export interface AppConfig {
   preferredPatternTags: string[];
   /** Bearish/rejection tags soft-blocked at entry (SL-correlated). */
   blockedPatternTags: string[];
+  /**
+   * Trading venue: "spot" = Jupiter swap API (long-only); "yolo" = brittle browser long/short.
+   * YOLO defaults to dry-run; LIVE needs DRY_RUN=false and YOLO_LIVE=true.
+   */
+  tradeVenue: "spot" | "yolo";
+  /** YOLO collateral (JupUSD). Market minimum is 5. */
+  yoloCollateral: number;
+  /** YOLO leverage 500–1000. Prefer 500. */
+  yoloLeverage: number;
   jupiterApiKey?: string;
   xBearerToken?: string;
   heliusApiKey?: string;
@@ -263,6 +272,9 @@ export function loadConfig(): AppConfig {
           .split(/[,\s]+/)
           .map((s) => s.trim())
           .filter(Boolean),
+    tradeVenue: (process.env.TRADE_VENUE || file.tradeVenue || "spot").toLowerCase() === "yolo" ? "yolo" : "spot",
+    yoloCollateral: num(process.env.YOLO_COLLATERAL, (file as { yoloCollateral?: number }).yoloCollateral ?? 5),
+    yoloLeverage: num(process.env.YOLO_LEVERAGE, (file as { yoloLeverage?: number }).yoloLeverage ?? 500),
     jupiterApiKey: process.env.JUPITER_API_KEY || undefined,
     xBearerToken: process.env.X_BEARER_TOKEN || process.env.TWITTER_BEARER_TOKEN || undefined,
     heliusApiKey: process.env.HELIUS_API_KEY || undefined,

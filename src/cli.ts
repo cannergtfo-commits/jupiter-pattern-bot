@@ -422,6 +422,100 @@ program
     }
   });
 
+
+const yoloCmd = program.command("yolo").description("Jupiter YOLO browser venue (brittle; DRY_RUN default)");
+
+yoloCmd
+  .command("dry-run")
+  .description("Open YOLO page (if Chromium), simulate long/short, never sign")
+  .option("--seconds <n>", "Session length", "90")
+  .action(async (opts: { seconds?: string }) => {
+    process.env.DRY_RUN = "true";
+    delete process.env.YOLO_LIVE;
+    const sec = Number(opts.seconds) || 90;
+    try {
+      const { runYoloLoop } = await import("./yolo/loop.js");
+      await runYoloLoop({ durationMs: sec * 1000, forceTradeIfIdle: true });
+    } catch (e) {
+      console.error(chalk.red((e as Error).message));
+      process.exitCode = 1;
+    }
+  });
+
+yoloCmd
+  .command("run")
+  .description("YOLO loop: 30s scan LONG/SHORT/DO NOTHING + 40s max hold (respects DRY_RUN)")
+  .option("--once", "Single scan then exit")
+  .option("--seconds <n>", "Optional timed session")
+  .action(async (opts: { once?: boolean; seconds?: string }) => {
+    const cfg = loadConfig();
+    if (cfg.dryRun) {
+      console.log(chalk.yellow("DRY_RUN=true — YOLO actions simulated. Set DRY_RUN=false and YOLO_LIVE=true for live clicks."));
+    } else if (!["1", "true", "yes", "on"].includes(String(process.env.YOLO_LIVE || "").toLowerCase())) {
+      console.log(chalk.yellow("DRY_RUN=false but YOLO_LIVE not set — still simulating. Export YOLO_LIVE=true to click."));
+    } else {
+      console.log(chalk.red.bold("YOLO LIVE — browser will click Long/Short/Close. Tiny size only. Extreme leverage risk."));
+    }
+    try {
+      const { runYoloLoop } = await import("./yolo/loop.js");
+      await runYoloLoop({
+        once: !!opts.once,
+        durationMs: opts.seconds ? Number(opts.seconds) * 1000 : 0,
+        forceTradeIfIdle: false,
+      });
+    } catch (e) {
+      console.error(chalk.red((e as Error).message));
+      process.exitCode = 1;
+    }
+  });
+
+yoloCmd
+  .command("status")
+  .description("Show YOLO positions + fragility notes")
+  .action(async () => {
+    const { loadYoloPositions, FRAGILITY_NOTES, openYoloPositions } = await import("./yolo/index.js");
+    const cfg = loadConfig();
+    console.log(chalk.bold("=== YOLO status ==="));
+    console.log(`Venue:       ${cfg.tradeVenue}`);
+    console.log(`Dry run:     ${cfg.dryRun}`);
+    console.log(`YOLO_LIVE:   ${process.env.YOLO_LIVE || "(unset)"}`);
+    console.log(`Collateral:  ${cfg.yoloCollateral} (min 5 JupUSD)`);
+    console.log(`Leverage:    ${cfg.yoloLeverage}x`);
+    console.log(`TP / SL:     +${cfg.takeProfitPct}% / -${cfg.stopLossPct}% (collateral PnL)`);
+    console.log(`Max hold:    ${cfg.maxHoldSeconds}s`);
+    const open = openYoloPositions();
+    console.log(chalk.bold(`\nOpen: ${open.length}`));
+    for (const p of open) {
+      console.log(`  ${p.side} entry=$${p.entryMarkUsd} lev=${p.leverage}x dry=${p.dryRun} id=${p.id.slice(0, 8)}…`);
+    }
+    const closed = loadYoloPositions().filter((p) => p.status === "closed").slice(-8);
+    console.log(chalk.bold(`Recent closed: ${closed.length}`));
+    for (const p of closed) {
+      console.log(
+        `  ${p.side} entry=$${p.entryMarkUsd} exit=$${p.exitMarkUsd ?? "?"} pnl=${p.collateralPnlPct ?? "?"}% reason=${p.closeReason}`
+      );
+    }
+    console.log(chalk.bold("\nFragility:"));
+    for (const n of FRAGILITY_NOTES) console.log(chalk.dim("  • " + n));
+  });
+
+yoloCmd
+  .command("paper")
+  .description("5-minute mark-proxy paper session (no browser) — npm run paper")
+  .action(async () => {
+    console.log(chalk.dim("Delegating to scripts/paper-yolo.ts …"));
+    const { spawn } = await import("node:child_process");
+    const child = spawn("node", ["--import", "tsx", "scripts/paper-yolo.ts"], {
+      stdio: "inherit",
+      cwd: new URL("..", import.meta.url).pathname,
+      env: process.env,
+    });
+    await new Promise<void>((resolve, reject) => {
+      child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error("paper exit " + code))));
+    });
+  });
+
+
 program.parseAsync(process.argv).catch((e) => {
   console.error(chalk.red(String(e)));
   process.exit(1);

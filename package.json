@@ -1,7 +1,7 @@
 {
   "name": "jupiter-pattern-bot",
   "version": "1.0.0",
-  "description": "CLI Solana pattern trader — solana-skill candles/volume, Jupiter quote+swap, TP +50% / SL −20%, learn-from-closes",
+  "description": "CLI Solana pattern trader \u2014 YOLO browser long/short (dry-run default) + Jupiter spot, TP+50%/SL-20%, learn-from-closes",
   "type": "module",
   "main": "dist/cli.js",
   "bin": {
@@ -15,7 +15,9 @@
     "install:bot": "bash scripts/install.sh",
     "typecheck": "tsc --noEmit",
     "audit": "npm audit --omit=dev",
-    "init-wallet": "node --import tsx scripts/init-wallet.ts"
+    "init-wallet": "node --import tsx scripts/init-wallet.ts",
+    "paper": "node --import tsx scripts/paper-yolo.ts",
+    "yolo:dry-run": "node --import tsx scripts/yolo-dry-run.ts"
   },
   "engines": {
     "node": ">=20"
@@ -27,7 +29,8 @@
     "commander": "13.1.0",
     "dotenv": "16.4.7",
     "express": "4.21.2",
-    "ora": "8.2.0"
+    "ora": "8.2.0",
+    "playwright": "^1.49.1"
   },
   "devDependencies": {
     "@types/express": "4.17.21",
