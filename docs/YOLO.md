@@ -54,8 +54,10 @@ npm run yolo:dry-run
 # Status / positions
 npm run bot -- yolo status
 
-# Mark-proxy paper (no browser)
-npm run paper
+# Mark-proxy paper (no browser) — see docs/PAPER.md
+npm run paper                         # 5 min
+npm run paper -- --minutes 10
+npm run paper -- --minutes 15 --force-min 4
 ```
 
 **Live clicks (not recommended; user must opt in):**
@@ -92,3 +94,59 @@ npm run bot -- wallet withdraw <DEST_PUBKEY> <AMOUNT_SOL> --yes # confirm
 | `src/yolo/loop.ts` | 30s scan loop |
 | `scripts/paper-yolo.ts` | Mark-proxy paper session |
 | `scripts/yolo-dry-run.ts` | Browser dry-run harness |
+
+## Long / Short selectors (dry-run safe)
+
+Source of truth: `src/yolo/selectors.ts` (aligned with [YOLO trading docs](https://docs.jup.ag/user-docs/labs/yolo/trading) as of 2026-10-26).
+
+| Action | Selector keys | Docs copy | Dry-run |
+|--------|---------------|-----------|---------|
+| Terms | `acceptTerms` | Accept and Continue | May click (dismiss only) |
+| Market | `marketSol` | SOL | May click |
+| Collateral | `collateralInput`, `percent25`, `half`, `max` | You're paying / 25% / Half / Max | May fill (no submit) |
+| Open long | `longButton` | **Long** | Locate + screenshot — **no click** |
+| Open short | `shortButton` | **Short** | Locate + screenshot — **no click** |
+| Close | `closePosition`, `closePositionUnderChart` | Close / Close position | **no click** |
+| Lockout | `closeCountdown` | Close in Ns | Observe only |
+| Close all | `closeAll` | Close all | **no click** |
+
+Forbidden trade clicks while dry: `DRY_RUN_FORBIDDEN_CLICKS` in selectors.ts.
+
+```bash
+npm run bot -- yolo probe          # headless probe, never clicks Long/Short/Close
+npm run bot -- yolo probe --headed # human-visible
+npm run yolo:dry-run               # 90s simulated loop
+```
+
+Headless Chromium often gets a blank/captcha shell on jup.ag — a MISS is **not** proof the selector is wrong. Prefer docs + headed re-check.
+
+## Paper harness timing
+
+Shared constants in `src/yolo/constants.ts` / `YOLO_HARNESS`:
+
+| Knob | Value |
+|------|--------|
+| Decision cycle | **30s** → LONG / SHORT / DO NOTHING |
+| Max hold | **40s** hard |
+| Position poll | **5s** |
+| Close lockout (UI) | **15s** |
+| TP / SL | **+50%** / **−20%** collateral PnL |
+
+```bash
+npm run paper                      # mark-proxy, no browser
+npm run bot -- yolo paper --minutes 5
+npm run test:paper                 # unit tests for exit/timing
+```
+
+## Learning from paper / YOLO closes
+
+1. Each TP/SL/time close → `recordClosedTradeLesson` → `data/trade-learnings.json` + append `data/pending-skill-lessons.jsonl`
+2. Merge reusable bullets into docs:
+
+```bash
+npm run lessons:merge -- --dry     # preview
+npm run lessons:merge              # append docs/trade-learnings.md, archive pending
+# or: npm run bot -- lessons merge
+```
+
+Same spirit as the memecoin bot: close → lesson → pending JSONL → human/agent merges into skill notes.

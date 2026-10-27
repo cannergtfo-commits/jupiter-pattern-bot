@@ -21,3 +21,11 @@ Raw confluence did **not** separate winners (SL avg conf was higher). Flash dump
 6. Buy history notes now include pattern tags/score/bias/bond for the next pass
 
 Portfolio caps unchanged: 90% max, 0.01 SOL reserve. `DRY_RUN=false`.
+
+
+## YOLO / paper learning path
+
+1. Paper/YOLO closes call `recordClosedTradeLesson` (see `src/yolo/monitor.ts`, `src/yolo/paper-engine.ts`).
+2. Lessons land in `data/trade-learnings.json` and `data/pending-skill-lessons.jsonl`.
+3. Merge into this doc: `npm run lessons:merge` (archives pending under `data/lesson-archive/`).
+4. Timing defaults: **30s** decision cycle, **40s** max hold (`src/yolo/constants.ts`).

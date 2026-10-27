@@ -500,34 +500,74 @@ yoloCmd
   });
 
 yoloCmd
+  .command("probe")
+  .description("Dry-run: probe Long/Short/Close selectors on jup.ag/yolo (never clicks them)")
+  .option("--headed", "Run headed Chromium")
+  .action(async (opts: { headed?: boolean }) => {
+    process.env.DRY_RUN = "true";
+    delete process.env.YOLO_LIVE;
+    try {
+      const { probeYoloSelectors } = await import("./yolo/probe-selectors.js");
+      const report = await probeYoloSelectors({ headless: !opts.headed });
+      console.log(chalk.bold("=== YOLO selector probe (dry-run) ==="));
+      console.log(`URL: ${report.url}`);
+      console.log(`Playwright: ${report.playwright}`);
+      console.log(`Clicked Long/Short/Close: ${report.clickedLongShortClose}`);
+      for (const h of report.hits) {
+        const mark = h.matched ? chalk.green("HIT ") : chalk.yellow("MISS");
+        console.log(`  ${mark} ${h.key} — ${h.detail}`);
+      }
+      console.log(chalk.dim(report.note));
+      if (report.screenshotPath) console.log(chalk.dim(`shot: ${report.screenshotPath}`));
+      console.log(chalk.bold("Fragility:"));
+      for (const n of report.fragilityNotes.slice(0, 5)) console.log(chalk.dim("  • " + n));
+    } catch (e) {
+      console.error(chalk.red((e as Error).message));
+      process.exitCode = 1;
+    }
+  });
+
+yoloCmd
   .command("paper")
-  .description("Mark-proxy paper session (no browser) — LONG/SHORT, TP50/SL20, 40s max hold")
-  .option("--minutes <n>", "Session length in minutes (5–15 typical)", "5")
-  .option("--force-min <n>", "Force at least N trades if signals quiet", "2")
+  .description("Mark-proxy paper: 30s scan LONG/SHORT/DO NOTHING + 40s max hold (no browser)")
+  .option("--minutes <n>", "Session length in minutes", "5")
+  .option("--force-min <n>", "Force at least N trades if signals quiet", "3")
   .action(async (opts: { minutes?: string; forceMin?: string }) => {
     console.log(chalk.dim("Delegating to scripts/paper-yolo.ts …"));
     const { spawn } = await import("node:child_process");
     const { fileURLToPath } = await import("node:url");
     const root = fileURLToPath(new URL("..", import.meta.url));
-    const args = [
-      "--import",
-      "tsx",
-      "scripts/paper-yolo.ts",
-      "--minutes",
-      String(opts.minutes || "5"),
-      "--force-min",
-      String(opts.forceMin || "2"),
-    ];
-    const child = spawn("node", args, {
+    const minutes = Number(opts.minutes) || 5;
+    const child = spawn("node", ["--import", "tsx", "scripts/paper-yolo.ts"], {
       stdio: "inherit",
       cwd: root,
-      env: { ...process.env, DRY_RUN: "true" },
+      env: {
+        ...process.env,
+        DRY_RUN: "true",
+        PAPER_DURATION_MS: String(Math.round(minutes * 60_000)),
+        PAPER_FORCE_MIN: String(opts.forceMin || "3"),
+      },
     });
     await new Promise<void>((resolve, reject) => {
       child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error("paper exit " + code))));
     });
   });
 
+
+const lessonsCmd = program.command("lessons").description("Trade-learning helpers");
+lessonsCmd
+  .command("merge")
+  .description("Merge pending-skill-lessons.jsonl into docs/trade-learnings.md")
+  .option("--dry", "Print bullets without writing")
+  .action(async (opts: { dry?: boolean }) => {
+    const { spawn } = await import("node:child_process");
+    const args = ["--import", "tsx", "scripts/merge-skill-lessons.ts"];
+    if (opts.dry) args.push("--dry");
+    const child = spawn("node", args, { stdio: "inherit", cwd: process.cwd(), env: process.env });
+    await new Promise<void>((resolve, reject) => {
+      child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error("lessons merge exit " + code))));
+    });
+  });
 
 program.parseAsync(process.argv).catch((e) => {
   console.error(chalk.red(String(e)));

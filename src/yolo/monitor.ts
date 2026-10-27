@@ -5,6 +5,7 @@
  */
 import chalk from "chalk";
 import { loadConfig } from "../config.js";
+import { YOLO_MAX_HOLD_SECONDS } from "./constants.js";
 import { recordClosedTradeLesson } from "../learning.js";
 import { collateralPnlPct, fetchSolMarkUsd } from "./mark.js";
 import { openYoloPositions } from "./positions-store.js";
@@ -17,7 +18,7 @@ export async function monitorYoloPositions(driver: YoloDriver): Promise<void> {
   const cfg = loadConfig();
   const mark = await fetchSolMarkUsd();
   const maxHoldMs =
-    cfg.maxHoldSeconds > 0 ? cfg.maxHoldSeconds * 1000 : Number.POSITIVE_INFINITY;
+    (cfg.maxHoldSeconds > 0 ? cfg.maxHoldSeconds : YOLO_MAX_HOLD_SECONDS) * 1000;
 
   for (const pos of opens) {
     const pnl = collateralPnlPct(pos.side, pos.entryMarkUsd, mark, pos.leverage);

@@ -70,6 +70,17 @@ export interface PaperHarnessOpts {
   /** Inject sleep for tests. */
   sleep?: (ms: number) => Promise<void>;
   log?: (row: Record<string, unknown>) => void;
+  /**
+   * Optional async signal source (e.g. scanSolForYolo).
+   * When omitted, uses decidePaperSignal(marks) momentum.
+   */
+  signalFetcher?: () => Promise<{
+    signal: PaperSignal;
+    note?: string;
+    meta?: Record<string, unknown>;
+  }>;
+  /** Optional session id stamped into logs / notes. */
+  sessionId?: string;
 }
 
 export interface PaperHarnessResult {
@@ -91,6 +102,8 @@ export interface PaperHarnessResult {
   lastMark?: number;
   closed: ClosedPaperTrade[];
   outPath?: string;
+  sessionId?: string;
+  signalSource?: string;
 }
 
 function sleepDefault(ms: number): Promise<void> {
@@ -157,7 +170,12 @@ function closePos(
   };
 }
 
-function recordLesson(trade: ClosedPaperTrade, pos: PaperPos): string | undefined {
+function recordLesson(
+  trade: ClosedPaperTrade,
+  pos: PaperPos,
+  takeProfitPct: number,
+  stopLossPct: number
+): string | undefined {
   try {
     const lesson = recordClosedTradeLesson({
       position: {
@@ -167,8 +185,8 @@ function recordLesson(trade: ClosedPaperTrade, pos: PaperPos): string | undefine
         entryPriceUsd: trade.entry,
         amountToken: 0,
         amountSolSpent: 0,
-        takeProfitPct: Math.abs(trade.collateralPnlPct) || 50,
-        stopLossPct: 20,
+        takeProfitPct,
+        stopLossPct,
         openedAt: trade.openedAt,
         status: "closed",
         closeReason: trade.reason,
@@ -227,6 +245,8 @@ export async function runPaperHarness(opts: PaperHarnessOpts = {}): Promise<Pape
     leverage,
     collateral,
     forceMinTrades: forceMin,
+    sessionId: opts.sessionId,
+    signalSource: opts.signalFetcher ? "signalFetcher" : "momentum",
     note: "TP/SL = collateral PnL % at leverage. Spot SOL mark proxy. No wallet.",
   });
 
@@ -262,7 +282,7 @@ export async function runPaperHarness(opts: PaperHarnessOpts = {}): Promise<Pape
       });
       if (reason) {
         const t = closePos(open, mark, reason, now());
-        if (recordLessons) t.lessonId = recordLesson(t, open);
+        if (recordLessons) t.lessonId = recordLesson(t, open, tpPct, slPct);
         closed.push(t);
         log({ event: "close", ...t });
         open = null;
@@ -283,7 +303,24 @@ export async function runPaperHarness(opts: PaperHarnessOpts = {}): Promise<Pape
     const tnow = now();
     if (!open && tnow - lastScan >= scanMs) {
       lastScan = tnow;
-      let signal = decidePaperSignal(marks);
+      let signal: PaperSignal = "DO NOTHING";
+      let note = "momentum";
+      let meta: Record<string, unknown> | undefined;
+      if (opts.signalFetcher) {
+        try {
+          const rec = await opts.signalFetcher();
+          signal = rec.signal;
+          note = rec.note ?? "skill-scan";
+          meta = rec.meta;
+        } catch (e) {
+          log({ event: "scan_error", err: String(e) });
+          signal = "DO NOTHING";
+          note = `signalFetcher failed: ${String(e)}`;
+        }
+      } else {
+        signal = decidePaperSignal(marks);
+        note = "momentum";
+      }
       const remaining = endsAt - tnow;
       const needForce =
         closed.length + (open ? 1 : 0) < forceMin && remaining > maxHoldMs + 5_000;
@@ -292,25 +329,27 @@ export async function runPaperHarness(opts: PaperHarnessOpts = {}): Promise<Pape
         const prev = marks[marks.length - 2] ?? last;
         signal = last >= prev ? "LONG" : "SHORT";
         forced += 1;
+        note = `forced (${note})`;
         log({
           event: "force_signal",
           signal,
           reason: "signal-starved; forcing paper trade",
           forced,
+          underlying: note,
         });
       } else {
-        log({ event: "scan", signal, mark, marks: marks.slice(-3) });
+        log({ event: "scan", signal, mark, marks: marks.slice(-3), note, meta });
       }
 
       if (signal === "LONG" || signal === "SHORT") {
         open = {
           id: randomUUID(),
           side: signal,
-          entry: mark,
+          entry: (typeof meta?.markUsd === "number" ? (meta.markUsd as number) : mark),
           openedAt: now(),
           leverage,
           collateral,
-          note: `paper signal=${signal}`,
+          note: `paper signal=${signal} | ${note}`,
         };
         log({
           event: "open",
@@ -320,6 +359,7 @@ export async function runPaperHarness(opts: PaperHarnessOpts = {}): Promise<Pape
           leverage,
           collateral,
           maxHoldSec: maxHoldMs / 1000,
+          note: open.note,
         });
       }
     }
@@ -332,7 +372,7 @@ export async function runPaperHarness(opts: PaperHarnessOpts = {}): Promise<Pape
   if (open) {
     const mark = marks[marks.length - 1]!;
     const t = closePos(open, mark, "time", now());
-    if (recordLessons) t.lessonId = recordLesson(t, open);
+    if (recordLessons) t.lessonId = recordLesson(t, open, tpPct, slPct);
     closed.push(t);
     log({ event: "close_session_end", ...t });
     open = null;
@@ -360,6 +400,8 @@ export async function runPaperHarness(opts: PaperHarnessOpts = {}): Promise<Pape
     lastMark: marks[marks.length - 1],
     closed,
     outPath,
+    sessionId: opts.sessionId,
+    signalSource: opts.signalFetcher ? "signalFetcher" : "momentum",
   };
 
   fs.mkdirSync(path.dirname(outPath), { recursive: true });

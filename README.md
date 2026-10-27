@@ -88,10 +88,15 @@ npm run init-wallet
 npm run bot -- wallet create|encrypt|address|balance|withdraw
 npm run bot -- scan | run [--once] | status | history
 npm run bot -- bot on|off|status|tick
-npm run bot -- yolo dry-run|run|status|paper
+npm run bot -- yolo dry-run|probe|run|status|paper
+npm run bot -- lessons merge
+npm run test:paper
 npm run bot -- dashboard | web | setup
 npm run paper
 npm run yolo:dry-run
+npm run yolo:probe
+npm run lessons:merge
+npm run test:paper
 ```
 
 ## Related products
