@@ -500,6 +500,43 @@ yoloCmd
   });
 
 yoloCmd
+  .command("connect")
+  .description("Inject Phantom-compatible wallet + click Connect (public key only logged; DRY_RUN safe)")
+  .option("--headed", "Run headed Chromium")
+  .action(async (opts: { headed?: boolean }) => {
+    process.env.DRY_RUN = process.env.DRY_RUN || "true";
+    process.env.YOLO_INJECT_WALLET = "true";
+    if (opts.headed) process.env.YOLO_HEADLESS = "false";
+    try {
+      const { YoloDriver, defaultYoloConfig } = await import("./yolo/driver.js");
+      const { getAddress } = await import("./wallet.js");
+      const pub = getAddress();
+      console.log(chalk.bold("=== YOLO Connect (injected Phantom) ==="));
+      console.log(chalk.dim(`public: ${pub}`));
+      console.log(chalk.dim("Secret stays in Node — never printed."));
+      const driver = new YoloDriver(
+        defaultYoloConfig({
+          dryRun: true,
+          liveEnabled: false,
+          headless: !opts.headed,
+          injectWallet: true,
+          collateral: 5,
+        })
+      );
+      const nav = await driver.openBrowser();
+      console.log(nav.ok ? chalk.green(nav.message) : chalk.red(nav.message));
+      const conn = await driver.connectWallet();
+      console.log(conn.ok ? chalk.green(conn.message) : chalk.red(conn.message + " " + (conn.error ?? "")));
+      if (conn.screenshotPath) console.log(chalk.dim(`shot: ${conn.screenshotPath}`));
+      await driver.close();
+      if (!conn.ok) process.exitCode = 1;
+    } catch (e) {
+      console.error(chalk.red((e as Error).message));
+      process.exitCode = 1;
+    }
+  });
+
+yoloCmd
   .command("probe")
   .description("Dry-run: probe Long/Short/Close selectors on jup.ag/yolo (never clicks them)")
   .option("--headed", "Run headed Chromium")

@@ -29,7 +29,7 @@ Brittle **Playwright** driver against [jup.ag/yolo/?market=SOL&mode=classic](htt
 - Scan every **30s** → LONG / SHORT / DO NOTHING (solana-skill PA on SOL)
 - TP **+50%** / SL **−20%** as **collateral PnL %** ≈ `priceMove% × leverage`
 - Hard max hold **40s** (YOLO also allows close only after 15s)
-- Private key is **never** injected into the browser
+- Private key **never** enters page JS / screenshots; Node signs via injected Phantom provider (`YOLO_INJECT_WALLET`)
 
 ### Extreme risk
 
@@ -60,19 +60,25 @@ npm run paper -- --minutes 10
 npm run paper -- --minutes 15 --force-min 4
 ```
 
-**Live clicks (not recommended; user must opt in):**
+**Connect + live (user must opt in for live):**
 
 ```bash
-# 1) Create a persistent Chromium profile and connect wallet once (headed)
-# 2) Then:
+# 1) Prove Connect (dry-run safe):
+npm run yolo:connect
+
+# 2) One live trade at min 5 JupUSD (script sets LIVE then reverts):
+npm run yolo:one-live
+
+# 3) Or timed live loop:
 export DRY_RUN=false
 export YOLO_LIVE=true
-export YOLO_USER_DATA_DIR=/path/to/yolo-profile
+export YOLO_INJECT_WALLET=true
 export YOLO_HEADLESS=false
+export YOLO_COLLATERAL=5
 npm run bot -- yolo run --seconds 120
 ```
 
-The driver **does not** load `.wallet/keypair.json` into the page. Wallet signing is only via an already-connected extension in `YOLO_USER_DATA_DIR`.
+Preferred: injected Phantom provider (`YOLO_INJECT_WALLET=true`) — Node loads `.wallet` and signs via `exposeFunction`; only the public key enters page JS. Fallback: already-connected extension in `YOLO_USER_DATA_DIR` (never paste bot secret into chat).
 
 ## Withdraw
 
@@ -151,3 +157,75 @@ npm run lessons:merge              # append docs/trade-learnings.md, archive pen
 ```
 
 Same spirit as the memecoin bot: close → lesson → pending JSONL → human/agent merges into skill notes.
+
+## Lessons from 2026-10-26 one-live attempt (box)
+
+- Headless Chromium often returns a **black** page (0 selectors). Prefer `YOLO_HEADLESS=false`.
+- Seasonal **YOLO after dark** modal can cover the ticket — dismiss via "Maybe later" / Enable / X (`SELECTORS.dismissOverlay`).
+- Until a wallet is connected in `YOLO_USER_DATA_DIR`, the primary CTA is **Connect**, not Long/Short → error `wallet_not_connected`.
+- Prefer `npm run yolo:connect` (injected Phantom; secret stays in Node). Extension profile is fallback only — never paste bot secret into chat.
+- UI may default leverage to **1000x**; bust ≈ **0.1%** adverse. Requested size remains min **5 JupUSD**.
+- One-shot harness: `npm run yolo:one-live` (reverts `DRY_RUN=true` / `YOLO_LIVE=false` on exit).
+
+## Box-run Connect flow (injected Phantom — preferred)
+
+The bot wallet lives in `.wallet/` on the box (gitignored). **Never paste the private key into chat, Phantom UI, screenshots, or git.**
+
+Instead, Playwright injects a **Phantom-compatible** `window.solana` / `window.phantom.solana` provider:
+
+1. Node loads the keypair via `loadKeypair()` (secret stays in process memory).
+2. Only the **public** base58 address is passed into `addInitScript`.
+3. `signTransaction` / `signMessage` call `page.exposeFunction` → Node signs → returns base64 only.
+4. Driver clicks **Connect** → **Phantom** in the Jupiter modal.
+
+```bash
+# Prove Connect (stays DRY_RUN — no Long/Short click)
+npm run yolo:connect
+# or headless:
+npm run bot -- yolo connect
+
+# Public fund address (only):
+# 4617n4ihWMAvypgZMTb73Eptgxh4FK1Z9m5649XnpvLP
+# Need ≥5 JupUSD collateral + SOL for gas.
+```
+
+Env (all optional — defaults shown):
+
+| Var | Default | Meaning |
+|-----|---------|---------|
+| `YOLO_INJECT_WALLET` | `true` | Inject Phantom-compatible provider |
+| `YOLO_AUTO_APPROVE` | `true` | Node auto-approves signatures (no popup) |
+| `YOLO_HEADLESS` | `true` (`false` for connect/one-live scripts) | Prefer headed — headless often blank/captcha |
+| `YOLO_COLLATERAL` | `5` | **Always min 5 JupUSD** (clamped) |
+| `YOLO_LEVERAGE` | `500` | Prefer lowest |
+
+**MetaMask / EVM:** not used — YOLO is Solana. Do not import this key into MetaMask.
+
+**Real Phantom extension import:** avoided on purpose (would require pasting the secret into a UI). Use inject path.
+
+### One live trade after Connect works
+
+```bash
+# Still opt-in; reverts DRY_RUN on exit. Size forced to ≥5 JupUSD.
+npm run yolo:one-live
+```
+
+Requires: Connect OK, funded public address (≥5 JupUSD + SOL gas), `DRY_RUN=false` + `YOLO_LIVE=true` set by the script only for that run.
+
+
+## Connect proof (box, 2026-10-26 PDT)
+
+Headed `npm run yolo:connect` against funded public `4617n4ih…npvLP`:
+- Injected Phantom + Wallet Standard registered (secret stays in Node).
+- UI showed truncated `46…LP` and **LONG / SHORT** (no Connect CTA).
+- UI still defaults collateral ~10 JupUSD / **1000x** — live open path clamps collateral to **≥5** and nudges leverage toward **500x** via − clicks.
+- Stay `DRY_RUN` until BLAZAR runs `yolo:one-live`.
+
+### Fallback: extension profile (human)
+
+If inject Connect fails (captcha / wallet modal change):
+
+1. `YOLO_USER_DATA_DIR=./data/yolo-profile YOLO_HEADLESS=false YOLO_INJECT_WALLET=false`
+2. Hand the box to a human to Connect **their own** wallet in headed Chromium — **do not** ask them to paste the bot private key.
+3. Or fund a wallet they control and point live at that profile instead.
+

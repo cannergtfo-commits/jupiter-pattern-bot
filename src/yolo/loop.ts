@@ -34,6 +34,7 @@ export async function runYoloLoop(opts: YoloLoopOpts = {}): Promise<void> {
       collateral: Number(process.env.YOLO_COLLATERAL || 5),
       leverage: Number(process.env.YOLO_LEVERAGE || 500),
       userDataDir: process.env.YOLO_USER_DATA_DIR || undefined,
+      injectWallet: !["0", "false", "no"].includes(String(process.env.YOLO_INJECT_WALLET ?? "true").toLowerCase()),
     })
   );
 
@@ -50,6 +51,14 @@ export async function runYoloLoop(opts: YoloLoopOpts = {}): Promise<void> {
   const nav = await driver.openBrowser();
   console.log(nav.ok ? chalk.green(nav.message) : chalk.red(nav.message + " " + (nav.error ?? "")));
   if (nav.screenshotPath) console.log(chalk.dim(`  shot: ${nav.screenshotPath}`));
+  if (nav.publicKey) console.log(chalk.dim(`  public: ${nav.publicKey}`));
+
+  // Prefer injected Phantom Connect (secret stays in Node). Safe in dry-run.
+  if (nav.ok && driver.cfg.injectWallet) {
+    const conn = await driver.connectWallet();
+    console.log(conn.ok ? chalk.green(conn.message) : chalk.yellow(conn.message + " " + (conn.error ?? "")));
+    if (conn.screenshotPath) console.log(chalk.dim(`  shot: ${conn.screenshotPath}`));
+  }
 
   const started = Date.now();
   const duration = opts.durationMs ?? 0;

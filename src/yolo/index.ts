@@ -33,3 +33,5 @@ export type {
   YoloPosition,
   YoloScanRec,
 } from "./types.js";
+
+export { createInjectedWalletBindings, clampYoloCollateral } from "./injected-wallet.js";
