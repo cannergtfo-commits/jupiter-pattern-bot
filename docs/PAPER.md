@@ -11,6 +11,8 @@ No browser, no wallet, no signing. Uses **spot SOL/USD** as a YOLO mark proxy an
 | Collateral | **5** (units) |
 | Duration | **5** minutes (`--minutes 5..15`) |
 
+Entries and TP/SL polls use the **same** SOL mark feed (Jupiter price → CoinGecko fallback) so skill-scan Dex marks never open a mismatched basis.
+
 At 500x, a **0.1%** adverse move ≈ **−50%** collateral — paper % is hypersensitive. Treat results as signal/timing practice, not realistic YOLO fills.
 
 ## Run (5–15 minutes)
